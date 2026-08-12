@@ -1,0 +1,536 @@
+import { Product, Campaign, Order, Creative, Audience, AIRecommendation, CampaignMetrics, Integration } from '../types';
+
+export const demoProduct: Product = {
+  id: 'demo-prod-1',
+  businessId: 'demo-biz',
+  name: 'Jean + T-shirt Homme',
+  sku: 'JNT-001',
+  category: 'Vetements Homme',
+  description: 'Ensemble jean et t-shirt casual pour homme, style streetwear universitaire',
+  purchaseCost: 3400,
+  sellingPrice: 6490,
+  discountPrice: 5990,
+  stock: 150,
+  images: ['https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400'],
+  videos: [],
+  deliveryCost: 400,
+  packagingCost: 150,
+  expectedCancellationRate: 25,
+  expectedReturnRate: 8,
+  aiAnalysis: {
+    productType: 'Vetements homme - Ensemble casual',
+    visualCharacteristics: ['Jean slim', 'T-shirt basique', 'Look coordonne'],
+    colors: ['Bleu denim', 'Noir', 'Blanc', 'Gris'],
+    style: 'Casual / Streetwear / Universitaire',
+    targetDemographic: { age: '17-28', gender: 'Homme' },
+    sellingPoints: [
+      'Ensemble complet pret a porter',
+      'Prix abordable pour etudiants',
+      'Style tendance rentree',
+      'Confort quotidien'
+    ],
+    advertisingAngles: [
+      'Rentree universitaire',
+      'Tenue complete',
+      'Mode abordable',
+      'Nouveau look',
+      'Confort'
+    ],
+    objections: [
+      'Taille incorrecte',
+      'Qualite du tissu',
+      'Couleur differente de la photo'
+    ],
+    positioning: {
+      mainBenefit: 'Look complet et style sans se ruiner',
+      secondaryBenefits: [
+        "Economie de temps (pas besoin d'assortir)",
+        'Prix etudiant',
+        'Livraison dans toutes les wilayas'
+      ],
+      usp: 'Ensemble coordonne a prix etudiant avec livraison 58 wilayas',
+      painPoint: 'Difficulte a trouver des tenues abordables et stylees pour la rentree',
+      emotionalBenefit: 'Confiance en soi et appartenance au groupe',
+      rationalBenefit: "Economie de temps et d'argent"
+    },
+    targetCustomer: {
+      age: '17-28 ans',
+      gender: 'Homme',
+      location: 'Algerie - Toutes wilayas',
+      interests: [
+        'Mode masculine',
+        'Streetwear',
+        'Sneakers',
+        'Universite',
+        'Rentree scolaire'
+      ],
+      motivations: [
+        'Se preparer pour la rentree',
+        'Renouveler sa garde-robe',
+        'Suivre les tendances',
+        'Prix abordable'
+      ],
+      objections: [
+        'Qualite inconnue',
+        'Taille incertaine',
+        'Delai de livraison'
+      ]
+    }
+  }
+};
+
+export const demoCreatives: Creative[] = [
+  {
+    id: 'demo-creative-1',
+    productId: 'demo-prod-1',
+    name: 'Rentree - Look Complet',
+    type: 'image_ad',
+    angle: 'Rentree / Saisonnier',
+    hook: "وش راك لابس في rentree؟",
+    primaryText: 'Ensemble Jean + T-shirt a seulement 6490 DA ! Livraison dans les 58 wilayas. Paiement a la livraison.',
+    headline: 'Jean + T-shirt — 6490 DA',
+    cta: 'Commander maintenant',
+    status: 'approved',
+    aiScore: 91,
+    aiExplanation: "Performe exceptionnellement bien grace a l'angle rentree qui resonne fortement avec la cible 17-25 ans. Le CTR est 34% superieur a la moyenne.",
+    metrics: {
+      spend: 4500,
+      impressions: 125000,
+      ctr: 3.2,
+      cpc: 11.25,
+      cpm: 36,
+      orders: 42,
+      confirmedOrders: 31,
+      deliveredOrders: 24,
+      revenue: 155760,
+      profit: 68280,
+      costPerDeliveredOrder: 187.5
+    }
+  },
+  {
+    id: 'demo-creative-2',
+    productId: 'demo-prod-1',
+    name: 'Prix/Offer - Economique',
+    type: 'instagram_reel',
+    angle: 'Prix/Offre',
+    hook: '6490 DA seulement !',
+    primaryText: 'Pour moins de 6500 DA, tu as un look complet ! Ne rate pas cette offre rentree.',
+    headline: 'Look Complet — 6490 DA',
+    cta: 'Acheter maintenant',
+    status: 'approved',
+    aiScore: 63,
+    aiExplanation: "Bon engagement mais taux de conversion inferieur. Les utilisateurs cliquent mais hesitent a commander. Tester un angle plus emotionnel.",
+    metrics: {
+      spend: 3200,
+      impressions: 98000,
+      ctr: 2.8,
+      cpc: 11.65,
+      cpm: 32.65,
+      orders: 18,
+      confirmedOrders: 12,
+      deliveredOrders: 9,
+      revenue: 58410,
+      profit: 24570,
+      costPerDeliveredOrder: 355.56
+    }
+  },
+  {
+    id: 'demo-creative-3',
+    productId: 'demo-prod-1',
+    name: 'Lifestyle - Universitaire',
+    type: 'instagram_story',
+    angle: 'Lifestyle',
+    hook: 'Le look parfait pour la fac',
+    primaryText: 'Confortable, style et abordable. Cet ensemble est fait pour toi etudiant !',
+    headline: 'Style Universitaire',
+    cta: 'Voir plus',
+    status: 'ready',
+    aiScore: 42,
+    aiExplanation: "CTR faible (1.4%). L'angle lifestyle est trop generique pour ce produit. Recommande : utiliser le hook de la rentree ou un angle prix plus agressif.",
+    metrics: {
+      spend: 2800,
+      impressions: 85000,
+      ctr: 1.4,
+      cpc: 23.53,
+      cpm: 32.94,
+      orders: 8,
+      confirmedOrders: 5,
+      deliveredOrders: 4,
+      revenue: 25960,
+      profit: 10520,
+      costPerDeliveredOrder: 700
+    }
+  }
+];
+
+export const demoAudiences: Audience[] = [
+  {
+    id: 'demo-aud-1',
+    name: 'Jeunes Hommes 17-25',
+    ageMin: 17,
+    ageMax: 25,
+    gender: 'male',
+    location: ['Algeria'],
+    interests: ['Fashion', 'Sneakers', 'Streetwear', 'Men clothing'],
+    explanation: 'Cible principale avec les meilleurs taux de conversion. Interets precis alignes avec le produit.'
+  },
+  {
+    id: 'demo-aud-2',
+    name: 'Universite / Rentree',
+    ageMin: 18,
+    ageMax: 27,
+    gender: 'male',
+    location: ['Algeria'],
+    interests: ['University', 'Back to school', 'Student life', 'Casual wear'],
+    explanation: 'Angle saisonnier fort. Performe particulierement bien en aout-septembre.'
+  },
+  {
+    id: 'demo-aud-3',
+    name: 'Broad - Hommes 18-30',
+    ageMin: 18,
+    ageMax: 30,
+    gender: 'male',
+    location: ['Algeria'],
+    interests: [],
+    explanation: "Ciblage large pour laisser l'algorithme Meta trouver les acheteurs. Recommande pour le scaling."
+  }
+];
+
+export const demoCampaign: Campaign = {
+  id: 'demo-camp-1',
+  businessId: 'demo-biz',
+  productId: 'demo-prod-1',
+  name: 'Rentree Jean+Tshirt - 1000DA/j',
+  objective: 'sales',
+  destination: 'website',
+  budgetType: 'daily',
+  budget: 1000,
+  audienceIds: ['demo-aud-1', 'demo-aud-2'],
+  creativeIds: ['demo-creative-1', 'demo-creative-2', 'demo-creative-3'],
+  status: 'active',
+  startDate: '2024-08-15',
+  trackingStatus: 'active'
+};
+
+export const demoOrders: Order[] = [
+  {
+    id: 'ORD-1024',
+    businessId: 'demo-biz',
+    customerName: 'Mohamed K.',
+    phone: '0554xxxxxx',
+    wilaya: 'Tipaza',
+    commune: 'Kolea',
+    address: 'Rue des Freres Bouadou, N 12',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 1,
+    price: 6490,
+    deliveryFee: 400,
+    total: 6890,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-1',
+    orderDate: '2024-08-20',
+    status: 'delivered',
+    deliveryCompany: 'Yalidine',
+    trackingNumber: 'YLD-784512'
+  },
+  {
+    id: 'ORD-1025',
+    businessId: 'demo-biz',
+    customerName: 'Amine B.',
+    phone: '0661xxxxxx',
+    wilaya: 'Alger',
+    commune: 'Bab Ezzouar',
+    address: 'Cite universitaire',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 2,
+    price: 6490,
+    deliveryFee: 400,
+    total: 13380,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-1',
+    orderDate: '2024-08-21',
+    status: 'confirmed',
+    deliveryCompany: 'ZR Express',
+    trackingNumber: 'ZR-995631'
+  },
+  {
+    id: 'ORD-1026',
+    businessId: 'demo-biz',
+    customerName: 'Karim T.',
+    phone: '0770xxxxxx',
+    wilaya: 'Oran',
+    commune: 'Es Senia',
+    address: 'Boulevard Mohamed VI',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 1,
+    price: 6490,
+    deliveryFee: 500,
+    total: 6990,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-2',
+    orderDate: '2024-08-22',
+    status: 'shipped',
+    deliveryCompany: 'Yalidine',
+    trackingNumber: 'YLD-784698'
+  },
+  {
+    id: 'ORD-1027',
+    businessId: 'demo-biz',
+    customerName: 'Sofiane M.',
+    phone: '0555xxxxxx',
+    wilaya: 'Constantine',
+    commune: 'El Khroub',
+    address: 'Rue Ahmed Bey',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 1,
+    price: 6490,
+    deliveryFee: 450,
+    total: 6940,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-1',
+    orderDate: '2024-08-22',
+    status: 'cancelled',
+  },
+  {
+    id: 'ORD-1028',
+    businessId: 'demo-biz',
+    customerName: 'Youssef A.',
+    phone: '0662xxxxxx',
+    wilaya: 'Blida',
+    commune: 'Boufarik',
+    address: 'Rue de la Republique',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 1,
+    price: 6490,
+    deliveryFee: 350,
+    total: 6840,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-3',
+    orderDate: '2024-08-23',
+    status: 'pending_confirmation',
+  },
+  {
+    id: 'ORD-1029',
+    businessId: 'demo-biz',
+    customerName: 'Hakim D.',
+    phone: '0771xxxxxx',
+    wilaya: 'Setif',
+    commune: 'Ain El Kebira',
+    address: 'Lotissement El Ikram',
+    productId: 'demo-prod-1',
+    productName: 'Jean + T-shirt Homme',
+    quantity: 1,
+    price: 6490,
+    deliveryFee: 450,
+    total: 6940,
+    campaignId: 'demo-camp-1',
+    creativeId: 'demo-creative-2',
+    orderDate: '2024-08-23',
+    status: 'refused',
+  }
+];
+
+export const demoRecommendations: AIRecommendation[] = [
+  {
+    id: 'rec-1',
+    type: 'creative',
+    title: 'Creative A surperforme Creative B',
+    description: 'Generer 2 nouvelles variations en utilisant le hook de Creative A.',
+    reason: 'Creative A a un CTR de 3.2% vs 1.4% pour Creative C, avec un cout par commande livree 73% plus bas.',
+    confidence: 92,
+    requiredData: 'Minimum 1000 impressions par creatif',
+    expectedImpact: 'Reduction estimee de 25% du cout par commande livree',
+    campaignId: 'demo-camp-1',
+    status: 'pending'
+  },
+  {
+    id: 'rec-2',
+    type: 'budget',
+    title: 'Augmenter le budget de Campaign A',
+    description: 'Augmenter le budget journalier de 1000 DA a 1200 DA.',
+    reason: 'Le cout par commande livree est de 187.5 DA, bien sous le seuil de rentabilite de 500 DA. La campagne est prete pour le scaling.',
+    confidence: 85,
+    requiredData: 'Minimum 5 commandes livrees',
+    expectedImpact: 'Augmentation estimee de 15-20% des commandes livrees',
+    campaignId: 'demo-camp-1',
+    status: 'pending'
+  },
+  {
+    id: 'rec-3',
+    type: 'audience',
+    title: 'Audience B a un meilleur taux de confirmation',
+    description: "L'audience Universite / Rentree convertit 15% mieux que la moyenne.",
+    reason: "Alignement parfait avec l'angle saisonnier de la campagne.",
+    confidence: 78,
+    requiredData: 'Minimum 50 conversions par audience',
+    expectedImpact: 'Amelioration du taux de confirmation de 10-15%',
+    campaignId: 'demo-camp-1',
+    status: 'pending'
+  },
+  {
+    id: 'rec-4',
+    type: 'pause',
+    title: 'Creative C sous-performe',
+    description: 'Le cout par commande livree de Creative C est de 700 DA, bien au-dessus du seuil.',
+    reason: "CTR faible (1.4%) et cout par clic eleve. L'angle lifestyle est trop generique.",
+    confidence: 88,
+    requiredData: 'Minimum 1000 impressions',
+    expectedImpact: 'Reallocation du budget vers les creatifs performants',
+    campaignId: 'demo-camp-1',
+    status: 'pending'
+  }
+];
+
+export const demoCampaignMetrics: CampaignMetrics[] = [
+  {
+    campaignId: 'demo-camp-1',
+    date: '2024-08-20',
+    spend: 1000,
+    impressions: 28500,
+    reach: 22100,
+    frequency: 1.29,
+    cpm: 35.09,
+    ctr: 2.85,
+    cpc: 12.30,
+    linkClicks: 81,
+    landingPageViews: 62,
+    leads: 0,
+    messages: 5,
+    orders: 8,
+    confirmedOrders: 6,
+    shippedOrders: 4,
+    deliveredOrders: 3,
+    cancelledOrders: 1,
+    returnedOrders: 0,
+    revenue: 19470,
+    profit: 8520,
+    roas: 3.89,
+    deliveredRoas: 2.92,
+    costPerOrder: 125,
+    costPerConfirmedOrder: 166.67,
+    costPerDeliveredOrder: 333.33
+  },
+  {
+    campaignId: 'demo-camp-1',
+    date: '2024-08-21',
+    spend: 1000,
+    impressions: 31200,
+    reach: 24500,
+    frequency: 1.27,
+    cpm: 32.05,
+    ctr: 3.12,
+    cpc: 10.28,
+    linkClicks: 97,
+    landingPageViews: 74,
+    leads: 0,
+    messages: 7,
+    orders: 12,
+    confirmedOrders: 9,
+    shippedOrders: 6,
+    deliveredOrders: 4,
+    cancelledOrders: 2,
+    returnedOrders: 0,
+    revenue: 25960,
+    profit: 11360,
+    roas: 4.33,
+    deliveredRoas: 2.89,
+    costPerOrder: 83.33,
+    costPerConfirmedOrder: 111.11,
+    costPerDeliveredOrder: 250
+  },
+  {
+    campaignId: 'demo-camp-1',
+    date: '2024-08-22',
+    spend: 1000,
+    impressions: 29800,
+    reach: 23200,
+    frequency: 1.28,
+    cpm: 33.56,
+    ctr: 2.95,
+    cpc: 11.36,
+    linkClicks: 88,
+    landingPageViews: 68,
+    leads: 0,
+    messages: 4,
+    orders: 10,
+    confirmedOrders: 7,
+    shippedOrders: 5,
+    deliveredOrders: 3,
+    cancelledOrders: 2,
+    returnedOrders: 1,
+    revenue: 19470,
+    profit: 7860,
+    roas: 3.24,
+    deliveredRoas: 1.95,
+    costPerOrder: 100,
+    costPerConfirmedOrder: 142.86,
+    costPerDeliveredOrder: 333.33
+  },
+  {
+    campaignId: 'demo-camp-1',
+    date: '2024-08-23',
+    spend: 1000,
+    impressions: 35500,
+    reach: 27800,
+    frequency: 1.28,
+    cpm: 28.17,
+    ctr: 3.35,
+    cpc: 8.40,
+    linkClicks: 119,
+    landingPageViews: 91,
+    leads: 0,
+    messages: 9,
+    orders: 14,
+    confirmedOrders: 10,
+    shippedOrders: 7,
+    deliveredOrders: 5,
+    cancelledOrders: 3,
+    returnedOrders: 1,
+    revenue: 32450,
+    profit: 14150,
+    roas: 4.55,
+    deliveredRoas: 3.25,
+    costPerOrder: 71.43,
+    costPerConfirmedOrder: 100,
+    costPerDeliveredOrder: 200
+  }
+];
+
+export const demoIntegrations: Integration[] = [
+  {
+    id: 'int-meta',
+    type: 'meta',
+    provider: 'Meta Business',
+    status: 'mock',
+    accountName: 'Demo Ad Account',
+    lastSync: '2024-08-23T14:30:00Z'
+  },
+  {
+    id: 'int-web',
+    type: 'website',
+    provider: 'Website Tracking',
+    status: 'mock',
+    lastSync: '2024-08-23T14:30:00Z'
+  },
+  {
+    id: 'int-delivery',
+    type: 'delivery',
+    provider: 'Yalidine',
+    status: 'mock',
+    lastSync: '2024-08-23T14:30:00Z'
+  }
+];
+
+export const WILAYAS = [
+  'Adrar', 'Chlef', 'Laghouat', 'Oum El Bouaghi', 'Batna', 'Bejaia', 'Biskra', 'Bechar', 'Blida', 'Bouira',
+  'Tamanrasset', 'Tebessa', 'Tlemcen', 'Tiaret', 'Tizi Ouzou', 'Alger', 'Djelfa', 'Jijel', 'Setif', 'Saida',
+  'Skikda', 'Sidi Bel Abbes', 'Annaba', 'Guelma', 'Constantine', 'Medea', 'Mostaganem', 'MSila', 'Mascara', 'Ouargla',
+  'Oran', 'El Bayadh', 'Illizi', 'Bordj Bou Arreridj', 'Boumerdes', 'El Tarf', 'Tindouf', 'Tissemsilt', 'El Oued', 'Khenchela',
+  'Souk Ahras', 'Tipaza', 'Mila', 'Ain Defla', 'Naama', 'Ain Temouchent', 'Ghardaia', 'Relizane', 'El MGhair', 'El Menia',
+  'Ouled Djellal', 'Bordj Baji Mokhtar', 'Beni Abbes', 'Timimoun', 'Touggourt', 'Djanet', 'In Salah', 'In Guezzam'
+];
