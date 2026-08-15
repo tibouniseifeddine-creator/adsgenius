@@ -83,3 +83,15 @@
 - **Decision:** Migrate the Products screen to the persisted API while preserving the broader prototype UI and DemoContext for features not yet covered by their roadmap phases.
 - **Reason:** Phase 3 requires core product operations to stop depending on demo product state without prematurely rewriting unrelated screens.
 - **Consequence:** Later phases can migrate other domains incrementally behind the same API/shared-contract pattern.
+
+## D016 — Phase 4 creative lineage and AI boundary
+- **Status:** Accepted
+- **Decision:** Persist Creative, CreativeVersion, CreativeAsset, and CreativeCopy as workspace-scoped domain records, and persist AITask, AIPromptVersion, and AIUsage as the traceability boundary for AI capabilities.
+- **Reason:** Creative outputs must remain attributable to their product/context and to the exact provider/model/prompt version that produced them.
+- **Consequence:** Phase 4 exposes a provider-neutral AI orchestration interface and a MOCK provider only. Production AI credentials/providers are intentionally deferred; no provider secret is placed in the client.
+
+## D017 — Phase 4 asset storage boundary
+- **Status:** Accepted
+- **Decision:** Creative assets store an internal storage key or an external media reference; binary storage remains behind the existing server-side Storage interface.
+- **Reason:** The architecture requires object storage for media while the roadmap does not yet freeze a production storage vendor.
+- **Consequence:** Phase 4 does not upload media directly from the client to an unapproved vendor or embed storage credentials in application code.
