@@ -11,7 +11,7 @@ import { createProduct, createVariant, deleteProduct, deleteVariant, getProduct,
 import { addAsset, addCopy, createCreative, deleteCreative, getCreative, listCreatives, updateCreative } from './modules/creatives.js';
 import { runAITask } from './modules/ai.js';
 import { createAudience, deleteAudience, getAudience, listAudiences, updateAudience } from './modules/audiences.js';
-import { createAd, createAdSet, createCampaign, deleteAd, deleteAdSet, deleteCampaign, getCampaign, listAds, listAdSets, listCampaigns, updateAd, updateAdSet } from './modules/campaigns.js';
+import { createAd, createAdSet, createCampaign, deleteAd, deleteAdSet, deleteCampaign, getCampaign, listAds, listAdSets, listCampaigns, updateAd, updateAdSet, updateCampaign } from './modules/campaigns.js';
 import { detectCreativeFatigue, diagnoseCampaign, getCampaignAnalytics, ingestPerformanceSnapshot, listCreativeFatigue, listDiagnostics } from './modules/analytics.js';
 
 function writeJson(response: ServerResponse, status: number, body: unknown, requestId: string): void { response.statusCode = status; response.setHeader('content-type', 'application/json; charset=utf-8'); response.setHeader(REQUEST_ID_HEADER, requestId); if (status === 204) { response.end(); return; } response.end(JSON.stringify(body)); }
