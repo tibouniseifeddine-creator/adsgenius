@@ -40,3 +40,16 @@
 - **Status:** Accepted
 - **Decision:** AI automation uses explicit permission levels from analysis/recommendation through approved execution and user-defined rule automation.
 - **Reason:** Protect user control and advertising accounts while allowing future automation.
+
+## D009 — Phase 0 package manager strategy
+- **Status:** Accepted for Phase 0
+- **Decision:** Keep npm as the package manager for the current single-package React/Vite prototype. Defer the pnpm workspace migration until the target multi-package architecture is actually introduced.
+- **Context:** The target architecture anticipates shared client, backend, and package workspaces, but the current repository is still a single frontend prototype.
+- **Reason:** Avoid a structural migration that would add risk without delivering Phase 0 value. Preserve the existing lockfile/tooling conventions while establishing reproducible engineering checks.
+- **Consequence:** Phase 0 uses npm commands. The future workspace migration must be explicit, reviewed, and documented rather than introduced as an incidental tooling change.
+
+## D010 — Phase 0 quality tooling
+- **Status:** Accepted for Phase 0
+- **Decision:** Use TypeScript strict checking, ESLint, Prettier, and Vitest for the current React/Vite prototype.
+- **Reason:** These tools fit the existing Vite/TypeScript stack and provide a small, incremental engineering foundation without changing product behavior.
+- **Consequence:** The repository now has reproducible quality commands and CI coverage for typecheck, lint, tests, and production build.
