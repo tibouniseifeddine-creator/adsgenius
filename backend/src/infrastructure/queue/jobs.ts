@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 export type JobHandler<TPayload> = (payload: TPayload) => Promise<void>;
 
 export interface JobRef {
@@ -11,7 +13,7 @@ export interface JobQueue {
 
 export class InMemoryJobQueue implements JobQueue {
   async enqueue<TPayload>(type: string, payload: TPayload, handler: JobHandler<TPayload>): Promise<JobRef> {
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     queueMicrotask(() => {
       void handler(payload);
     });
