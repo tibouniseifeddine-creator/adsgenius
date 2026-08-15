@@ -321,7 +321,7 @@ model Campaign {
   name String
   objective CampaignObjective
   status CampaignStatus @default(DRAFT)
-  budgetType CampaignBudgetType
+  budgetType CampaignBudgetType @map("budget_type")
   budgetAmount Decimal @db.Decimal(18, 2) @map("budget_amount")
   currency String @db.VarChar(3)
   startAt DateTime? @map("start_at")
