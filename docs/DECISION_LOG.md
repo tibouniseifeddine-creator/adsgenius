@@ -53,3 +53,21 @@
 - **Decision:** Use TypeScript strict checking, ESLint, Prettier, and Vitest for the current React/Vite prototype.
 - **Reason:** These tools fit the existing Vite/TypeScript stack and provide a small, incremental engineering foundation without changing product behavior.
 - **Consequence:** The repository now has reproducible quality commands and CI coverage for typecheck, lint, tests, and production build.
+
+## D011 — Phase 1 workspace transition
+- **Status:** Accepted
+- **Decision:** Introduce npm workspaces in Phase 1 for `backend` and shared packages while retaining the existing root React/Vite application in place.
+- **Reason:** Phase 1 now implements the target architecture's first backend/shared-contract boundaries. Moving the prototype wholesale is explicitly deferred.
+- **Consequence:** Future feature migration can proceed incrementally behind stable contracts instead of requiring a repository rewrite.
+
+## D012 — Phase 1 database foundation
+- **Status:** Accepted
+- **Decision:** Use PostgreSQL with Prisma as the initial database access and migration foundation.
+- **Reason:** The approved database design names PostgreSQL as the production system of record and explicitly calls for Prisma schema/migrations.
+- **Consequence:** Phase 1 contains only an infrastructure marker table. Product/domain tables remain deferred to their respective roadmap phases.
+
+## D013 — Phase 1 infrastructure adapters
+- **Status:** Accepted
+- **Decision:** Introduce interfaces for object storage and background jobs without selecting production vendors yet.
+- **Reason:** The architecture requires these boundaries, while the roadmap intentionally leaves the queue/storage technology open until infrastructure constraints are evaluated.
+- **Consequence:** In-memory/no-op implementations are limited to development scaffolding and cannot be treated as production integrations.
