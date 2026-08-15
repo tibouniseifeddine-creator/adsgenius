@@ -6,7 +6,8 @@ type ApiErrorCode =
   | 'CONFLICT'
   | 'NOT_FOUND'
   | 'INTERNAL_ERROR'
-  | 'SERVICE_UNAVAILABLE';
+  | 'SERVICE_UNAVAILABLE'
+  | 'AI_PROVIDER_ERROR';
 
 interface ApiErrorBody {
   error: {
