@@ -1,4 +1,18 @@
-import type { ApiError, ApiErrorCode } from '@adsgenius/shared-types';
+type ApiErrorCode =
+  | 'BAD_REQUEST'
+  | 'VALIDATION_ERROR'
+  | 'NOT_FOUND'
+  | 'INTERNAL_ERROR'
+  | 'SERVICE_UNAVAILABLE';
+
+interface ApiErrorBody {
+  error: {
+    code: ApiErrorCode;
+    message: string;
+    details?: Record<string, unknown>;
+    requestId: string;
+  };
+}
 
 export class AppError extends Error {
   readonly code: ApiErrorCode;
@@ -19,7 +33,7 @@ export class AppError extends Error {
   }
 }
 
-export function toApiError(error: unknown, requestId: string): { status: number; body: ApiError } {
+export function toApiError(error: unknown, requestId: string): { status: number; body: ApiErrorBody } {
   if (error instanceof AppError) {
     return {
       status: error.status,
