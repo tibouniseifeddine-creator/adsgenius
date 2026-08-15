@@ -7,44 +7,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum WorkspaceRole {
-  OWNER
-  ADMIN
-  MEMBER
-  VIEWER
-}
-enum MembershipStatus {
-  ACTIVE
-  INVITED
-  SUSPENDED
-}
-enum ProductVariantStatus {
-  ACTIVE
-  INACTIVE
-}
-enum CreativeStatus {
-  DRAFT
-  READY
-  ARCHIVED
-}
-enum CreativeAssetType {
-  IMAGE
-  VIDEO
-  AUDIO
-  OTHER
-}
-enum AIProvider {
-  MOCK
-  OPENAI
-  ANTHROPIC
-  OTHER
-}
-enum AITaskStatus {
-  PENDING
-  RUNNING
-  SUCCEEDED
-  FAILED
-}
+enum WorkspaceRole { OWNER ADMIN MEMBER VIEWER }
+enum MembershipStatus { ACTIVE INVITED SUSPENDED }
+enum ProductVariantStatus { ACTIVE INACTIVE }
+enum CreativeStatus { DRAFT READY ARCHIVED }
+enum CreativeAssetType { IMAGE VIDEO AUDIO OTHER }
+enum AIProvider { MOCK OPENAI ANTHROPIC OTHER }
+enum AITaskStatus { PENDING RUNNING SUCCEEDED FAILED }
+enum AudienceType { BROAD INTERESTS CUSTOM LOOKALIKE RETARGETING }
+enum AudienceStatus { ACTIVE ARCHIVED }
+enum CampaignObjective { SALES LEADS MESSAGES TRAFFIC WEBSITE_CONVERSIONS }
+enum CampaignStatus { DRAFT READY ACTIVE PAUSED ARCHIVED }
+enum CampaignBudgetType { DAILY LIFETIME }
+enum AdSetStatus { DRAFT ACTIVE PAUSED ARCHIVED }
+enum AdStatus { DRAFT ACTIVE PAUSED ARCHIVED }
 
 model InfrastructureState {
   key String @id
@@ -83,6 +59,8 @@ model Workspace {
   auditLogs AuditLog[]
   products Product[]
   creatives Creative[]
+  audiences Audience[]
+  campaigns Campaign[]
   aiTasks AITask[]
   @@map("workspaces")
 }
@@ -158,6 +136,7 @@ model Product {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   variants ProductVariant[]
   creatives Creative[]
+  campaigns Campaign[]
   @@unique([workspaceId, sku])
   @@index([workspaceId, active])
   @@index([workspaceId, category])
@@ -197,6 +176,7 @@ model Creative {
   versions CreativeVersion[]
   assets CreativeAsset[]
   copies CreativeCopy[]
+  ads Ad[]
   aiTasks AITask[]
   @@index([workspaceId, status])
   @@index([workspaceId, productId])
@@ -213,6 +193,7 @@ model CreativeVersion {
   creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
   assets CreativeAsset[]
   copies CreativeCopy[]
+  ads Ad[]
   @@unique([creativeId, version])
   @@index([creativeId, createdAt])
   @@map("creative_versions")
@@ -247,9 +228,87 @@ model CreativeCopy {
   createdAt DateTime @default(now()) @map("created_at")
   creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
   version CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  ads Ad[]
   @@index([creativeId, createdAt])
   @@index([versionId])
   @@map("creative_copies")
+}
+
+model Audience {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  name String
+  type AudienceType
+  definition Json @default("{}")
+  status AudienceStatus @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adSets AdSet[]
+  @@unique([workspaceId, name])
+  @@index([workspaceId, status])
+  @@map("audiences")
+}
+
+model Campaign {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  productId String? @map("product_id")
+  name String
+  objective CampaignObjective
+  status CampaignStatus @default(DRAFT)
+  budgetType CampaignBudgetType
+  budgetAmount Decimal @db.Decimal(18, 2) @map("budget_amount")
+  currency String @db.VarChar(3)
+  startAt DateTime? @map("start_at")
+  endAt DateTime? @map("end_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  adSets AdSet[]
+  @@index([workspaceId, status])
+  @@index([workspaceId, productId])
+  @@map("campaigns")
+}
+
+model AdSet {
+  id String @id @default(uuid())
+  campaignId String @map("campaign_id")
+  audienceId String? @map("audience_id")
+  name String
+  status AdSetStatus @default(DRAFT)
+  budgetAmount Decimal? @db.Decimal(18, 2) @map("budget_amount")
+  targeting Json @default("{}")
+  placements Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  audience Audience? @relation(fields: [audienceId], references: [id], onDelete: SetNull)
+  ads Ad[]
+  @@index([campaignId, status])
+  @@index([audienceId])
+  @@map("ad_sets")
+}
+
+model Ad {
+  id String @id @default(uuid())
+  adSetId String @map("adset_id")
+  creativeVersionId String? @map("creative_version_id")
+  copyAssetId String? @map("copy_asset_id")
+  name String
+  status AdStatus @default(DRAFT)
+  destinationUrl String? @map("destination_url")
+  trackingConfig Json @default("{}") @map("tracking_config")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  adSet AdSet @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+  creativeVersion CreativeVersion? @relation(fields: [creativeVersionId], references: [id], onDelete: SetNull)
+  copyAsset CreativeCopy? @relation(fields: [copyAssetId], references: [id], onDelete: SetNull)
+  @@index([adSetId, status])
+  @@index([creativeVersionId])
+  @@index([copyAssetId])
+  @@map("ads")
 }
 
 model AIPromptVersion {
