@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { prisma } from '../infrastructure/database/client.js';
 import { authenticate, register } from './auth.js';
-import { createProduct, createVariant, calculateProductEconomics, deleteProduct, getProduct } from './products.js';
+import { calculateProductEconomics, createProduct, createVariant, deleteProduct, getProduct } from './products.js';
 
 const integration = Boolean(process.env.DATABASE_URL);
-
 type MockResponse = { headers: Record<string, string | string[]>; setHeader(name: string, value: string | string[]): MockResponse; getHeader(name: string): string | string[] | undefined };
 function response(): MockResponse { const headers: Record<string, string | string[]> = {}; return { headers, setHeader(name, value) { headers[name] = value; return this; }, getHeader(name) { return headers[name]; } }; }
 function bearer(token: string) { return { headers: { authorization: `Bearer ${token}` } } as never; }
@@ -16,7 +14,7 @@ describe('product economics', () => {
     const result = calculateProductEconomics({ baseCost: '100.10', salePrice: '250.25', shippingCost: '20.20', packagingCost: '5.05', expectedCancellationRate: '10', expectedReturnRate: '5' });
     expect(result.retainedRate.toString()).toBe('0.85');
     expect(result.fixedCosts.toString()).toBe('125.35');
-    expect(result.breakEvenPrice?.toString()).toBe('147.470588235294117647058823529');
+    expect(result.breakEvenPrice?.toString()).toBe('147.47058823529411765');
     expect(result.expectedNetMargin.toString()).toBe('87.3625');
   });
 });
