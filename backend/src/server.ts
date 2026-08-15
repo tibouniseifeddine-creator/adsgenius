@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { config } from './shared/config.js';
 import { toApiError } from './shared/errors.js';
@@ -14,7 +15,7 @@ function writeJson(response: ServerResponse, status: number, body: unknown, requ
 
 function requestIdFrom(request: IncomingMessage): string {
   const supplied = request.headers[REQUEST_ID_HEADER];
-  return (Array.isArray(supplied) ? supplied[0] : supplied)?.trim() || crypto.randomUUID();
+  return (Array.isArray(supplied) ? supplied[0] : supplied)?.trim() || randomUUID();
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
