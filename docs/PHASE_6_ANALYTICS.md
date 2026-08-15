@@ -2,7 +2,7 @@
 
 **Requirement:** Phase 6 — Analytics + Campaign Detective
 **Branch:** `phase-6/analytics-campaign-detective`
-**Status:** Implementation complete; closure gated by CI.
+**Status:** **CLOSED**
 
 ## Implemented
 
@@ -15,8 +15,10 @@
 - Persisted advisory `AnalyticsRecommendation` records.
 - Creative fatigue signal storage and detection from comparative creative-version snapshots.
 - Campaign Detective endpoint with optional assistive explanation through the existing Phase 4 MOCK AI provider.
-- No production AI provider, Meta integration, or external mutation was introduced.
 - Analytics page migrated from DemoContext metrics to the persisted analytics API while preserving the existing dashboard/chart concept.
+- Shared analytics contracts and API client methods added.
+- API and decision records updated.
+- Dedicated Phase 6 CI workflow added with automatic push/PR execution and manual dispatch.
 
 ## Safety Boundary
 
@@ -24,14 +26,25 @@ Recommendations are advisory and require approval by default. Phase 6 does not e
 
 AI output remains explicitly MOCK/assistive. Deterministic analytics facts remain the source of truth for diagnosis evidence.
 
-## Verification Gate
+No production AI provider, Meta integration, shipping integration, billing, or external advertising mutation was introduced.
 
-CI must pass:
+## Final Verification
 
-1. Prisma client generation
-2. Database migrations
-3. Typecheck
-4. Lint
-5. Tests
-6. Production build
-7. Backend health smoke test
+GitHub Actions **Run #7** for commit `cfab8aa3a1fbc95afbc61acb2e9bfb2a2a8a66de` completed successfully:
+
+1. Install dependencies — PASS
+2. Prisma client generation — PASS
+3. Database migrations — PASS
+4. Typecheck — PASS
+5. Lint — PASS
+6. Tests — PASS
+7. Production build — PASS
+8. Backend health smoke test — PASS
+
+## Definition of Done
+
+- Analytics distinguish reported/calculated/estimated metrics — PASS
+- Campaign can receive a traceable diagnosis — PASS
+- Diagnosis references the relevant data window/evidence snapshots — PASS
+- Recommendations do not silently execute external changes — PASS
+- Existing prototype behavior outside Phase 6 remains preserved — PASS
