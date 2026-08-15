@@ -95,3 +95,15 @@
 - **Decision:** Creative assets store an internal storage key or an external media reference; binary storage remains behind the existing server-side Storage interface.
 - **Reason:** The architecture requires object storage for media while the roadmap does not yet freeze a production storage vendor.
 - **Consequence:** Phase 4 does not upload media directly from the client to an unapproved vendor or embed storage credentials in application code.
+
+## D018 — Phase 5 provider-neutral campaign hierarchy
+- **Status:** Accepted
+- **Decision:** Persist Audience, Campaign, AdSet, and Ad as workspace-scoped provider-neutral entities. Provider-specific IDs and external mutations remain outside the core domain and are deferred to the dedicated integration phases.
+- **Reason:** Phase 5 must replace prototype campaign state with a stable domain model before Meta or other advertising-provider integrations are introduced.
+- **Consequence:** Campaigns can reference workspace-owned products, audiences, creative versions, and copy assets; tracking configuration is stored as provider-neutral JSON; campaign readiness is validated server-side before READY/ACTIVE states are allowed.
+
+## D019 — Phase 5 pre-launch validation gate
+- **Status:** Accepted
+- **Decision:** A campaign cannot become READY or ACTIVE unless it contains at least one ad set and every ad set contains at least one ad with workspace-valid creative/copy references.
+- **Reason:** Prevent incomplete campaign structures from being treated as launchable while external publishing remains intentionally out of scope.
+- **Consequence:** The campaign builder creates the hierarchy as DRAFT, then promotes it to READY only after the server-side validation gate passes.
