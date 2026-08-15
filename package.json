@@ -3,14 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "engines": {
-    "node": ">=20.9.0",
-    "npm": ">=10.0.0"
-  },
-  "workspaces": [
-    "packages/*",
-    "backend"
-  ],
+  "engines": { "node": ">=20.9.0", "npm": ">=10.0.0" },
+  "workspaces": ["packages/*", "backend"],
   "scripts": {
     "install:clean": "npm ci",
     "postinstall": "prisma generate --schema backend/prisma/schema.prisma",
@@ -37,6 +31,8 @@
     "start:backend": "node backend/dist/server.js"
   },
   "dependencies": {
+    "@adsgenius/api-client": "0.1.0",
+    "@adsgenius/shared-types": "0.1.0",
     "@prisma/client": "^6.19.0",
     "clsx": "^2.0.0",
     "lucide-react": "^0.294.0",
