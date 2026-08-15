@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../infrastructure/database/client.js';
 import { AppError } from '../shared/errors.js';
 import type { AuthContext } from './auth.js';
@@ -50,11 +51,11 @@ export async function runAITask(auth: AuthContext, workspaceId: string, input: A
     if (!creative) throw new AppError('NOT_FOUND', 'Creative not found.', 404);
   }
   const prompt = await getOrCreatePrompt(capability);
-  const task = await prisma.aITask.create({ data: { workspaceId, userId: auth.userId, creativeId, promptVersionId: prompt.id, capability, provider: 'MOCK', model: 'mock-v1', status: 'RUNNING', inputJson: input, startedAt: new Date() } });
+  const task = await prisma.aITask.create({ data: { workspaceId, userId: auth.userId, creativeId, promptVersionId: prompt.id, capability, provider: 'MOCK', model: 'mock-v1', status: 'RUNNING', inputJson: input as Prisma.InputJsonValue, startedAt: new Date() } });
   try {
     const result = await mockAIProvider.generate(capability, input, prompt.template);
     const completed = await prisma.$transaction(async (tx) => {
-      const updated = await tx.aITask.update({ where: { id: task.id }, data: { status: 'SUCCEEDED', outputJson: result.output, completedAt: new Date() } });
+      const updated = await tx.aITask.update({ where: { id: task.id }, data: { status: 'SUCCEEDED', outputJson: result.output as Prisma.InputJsonValue, completedAt: new Date() } });
       await tx.aIUsage.create({ data: { taskId: task.id, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimatedCost: 0, currency: 'USD' } });
       await tx.auditLog.create({ data: { workspaceId, userId: auth.userId, action: `ai.${capability}`, entityType: 'AITask', entityId: task.id, afterJson: { provider: 'MOCK', model: 'mock-v1', promptVersionId: prompt.id }, requestReference: requestId } });
       return updated;
