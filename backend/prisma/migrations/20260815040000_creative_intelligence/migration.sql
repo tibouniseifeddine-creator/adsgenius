@@ -3,9 +3,6 @@ CREATE TYPE "CreativeAssetType" AS ENUM ('IMAGE', 'VIDEO', 'AUDIO', 'OTHER');
 CREATE TYPE "AIProvider" AS ENUM ('MOCK', 'OPENAI', 'ANTHROPIC', 'OTHER');
 CREATE TYPE "AITaskStatus" AS ENUM ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED');
 
-ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "dummy_phase4" BOOLEAN DEFAULT false;
-ALTER TABLE "users" DROP COLUMN IF EXISTS "dummy_phase4";
-
 CREATE TABLE "creatives" (
   "id" TEXT NOT NULL,
   "workspace_id" TEXT NOT NULL,
