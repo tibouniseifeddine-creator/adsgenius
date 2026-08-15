@@ -1,0 +1,44 @@
+import { randomUUID } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { config } from './shared/config.js';
+import { toApiError } from './shared/errors.js';
+import { logger } from './shared/logging.js';
+import { REQUEST_ID_HEADER } from './shared/request-id.js';
+import { checkDatabase, disconnectDatabase } from './infrastructure/database/client.js';
+import { authenticate, login, logout, me, refresh, register } from './modules/auth.js';
+import { addMember, createWorkspace, getWorkspace, listMembers, listWorkspaces, removeMember, requestBody, updateMember, updateWorkspace } from './modules/workspaces.js';
+import { createProduct, createVariant, deleteProduct, deleteVariant, getProduct, listProducts, updateProduct, updateVariant } from './modules/products.js';
+
+function writeJson(response: ServerResponse, status: number, body: unknown, requestId: string): void { response.statusCode = status; response.setHeader('content-type', 'application/json; charset=utf-8'); response.setHeader(REQUEST_ID_HEADER, requestId); if (status === 204) { response.end(); return; } response.end(JSON.stringify(body)); }
+function requestIdFrom(request: IncomingMessage): string { const supplied = request.headers[REQUEST_ID_HEADER]; return (Array.isArray(supplied) ? supplied[0] : supplied)?.trim() || randomUUID(); }
+
+async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const requestId = requestIdFrom(request); const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`); const path = url.pathname;
+  try {
+    if (request.method === 'GET' && path === '/api/v1/health') { const databaseUp = await checkDatabase(); writeJson(response, databaseUp ? 200 : 503, { status: databaseUp ? 'ok' : 'degraded', service: 'adsgenius-api', version: config.appVersion, database: databaseUp ? 'up' : 'down', requestId }, requestId); return; }
+    if (request.method === 'POST' && path === '/api/v1/auth/register') { writeJson(response, 201, await register(await requestBody(request), response, requestId), requestId); return; }
+    if (request.method === 'POST' && path === '/api/v1/auth/login') { writeJson(response, 200, await login(await requestBody(request), response, requestId), requestId); return; }
+    if (request.method === 'POST' && path === '/api/v1/auth/refresh') { writeJson(response, 200, await refresh(request, response, requestId), requestId); return; }
+    if (request.method === 'POST' && path === '/api/v1/auth/logout') { await logout(request, response, requestId); writeJson(response, 200, { ok: true }, requestId); return; }
+    if (request.method === 'GET' && path === '/api/v1/auth/me') { writeJson(response, 200, await me(request), requestId); return; }
+    const auth = await authenticate(request);
+    if (request.method === 'GET' && path === '/api/v1/workspaces') { writeJson(response, 200, { data: await listWorkspaces(auth) }, requestId); return; }
+    if (request.method === 'POST' && path === '/api/v1/workspaces') { writeJson(response, 201, await createWorkspace(auth, await requestBody(request), requestId), requestId); return; }
+    const workspaceMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)$/); if (workspaceMatch) { const workspaceId = workspaceMatch[1]; if (request.method === 'GET') writeJson(response, 200, await getWorkspace(auth, workspaceId), requestId); else if (request.method === 'PATCH') writeJson(response, 200, await updateWorkspace(auth, workspaceId, await requestBody(request), requestId), requestId); else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const membersMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/members$/); if (membersMatch) { const workspaceId = membersMatch[1]; if (request.method === 'GET') writeJson(response, 200, { data: await listMembers(auth, workspaceId) }, requestId); else if (request.method === 'POST') writeJson(response, 201, await addMember(auth, workspaceId, await requestBody(request), requestId), requestId); else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const memberMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/members\/([^/]+)$/); if (memberMatch) { const workspaceId = memberMatch[1]; const memberId = memberMatch[2]; if (request.method === 'PATCH') writeJson(response, 200, await updateMember(auth, workspaceId, memberId, await requestBody(request), requestId), requestId); else if (request.method === 'DELETE') { await removeMember(auth, workspaceId, memberId, requestId); writeJson(response, 204, null, requestId); } else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const productsCollection = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products$/); if (productsCollection) { const workspaceId = productsCollection[1]; if (request.method === 'GET') writeJson(response, 200, { data: await listProducts(auth, workspaceId, url.searchParams.get('search') ?? undefined) }, requestId); else if (request.method === 'POST') writeJson(response, 201, await createProduct(auth, workspaceId, await requestBody(request), requestId), requestId); else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const productMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products\/([^/]+)$/); if (productMatch) { const workspaceId = productMatch[1]; const productId = productMatch[2]; if (request.method === 'GET') writeJson(response, 200, await getProduct(auth, workspaceId, productId), requestId); else if (request.method === 'PATCH') writeJson(response, 200, await updateProduct(auth, workspaceId, productId, await requestBody(request), requestId), requestId); else if (request.method === 'DELETE') { await deleteProduct(auth, workspaceId, productId, requestId); writeJson(response, 204, null, requestId); } else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const variantsMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products\/([^/]+)\/variants$/); if (variantsMatch) { const workspaceId = variantsMatch[1]; const productId = variantsMatch[2]; if (request.method === 'POST') writeJson(response, 201, await createVariant(auth, workspaceId, productId, await requestBody(request), requestId), requestId); else throw new Error('ROUTE_NOT_FOUND'); return; }
+    const variantMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products\/([^/]+)\/variants\/([^/]+)$/); if (variantMatch) { const workspaceId = variantMatch[1]; const productId = variantMatch[2]; const variantId = variantMatch[3]; if (request.method === 'PATCH') writeJson(response, 200, await updateVariant(auth, workspaceId, productId, variantId, await requestBody(request), requestId), requestId); else if (request.method === 'DELETE') { await deleteVariant(auth, workspaceId, productId, variantId, requestId); writeJson(response, 204, null, requestId); } else throw new Error('ROUTE_NOT_FOUND'); return; }
+    writeJson(response, 404, { error: { code: 'NOT_FOUND', message: 'Route not found.', requestId } }, requestId);
+  } catch (error) {
+    const apiError = toApiError(error instanceof Error && error.message === 'ROUTE_NOT_FOUND' ? new Error('Route not found.') : error, requestId);
+    if (error instanceof Error && error.message === 'ROUTE_NOT_FOUND') writeJson(response, 404, { error: { code: 'NOT_FOUND', message: 'Route not found.', requestId } }, requestId); else { logger.error('Request failed', { requestId, error: error instanceof Error ? error.message : String(error) }); writeJson(response, apiError.status, apiError.body, requestId); }
+  }
+}
+
+const server = createServer((request, response) => { void handle(request, response); });
+server.listen(config.port, config.host, async () => { const databaseUp = await checkDatabase(); logger.info('AdsGenius API started', { host: config.host, port: config.port, database: databaseUp ? 'up' : 'down' }); if (!databaseUp && process.env.API_REQUIRE_DATABASE === 'true') { logger.error('Database is required but unavailable; shutting down.'); server.close(); await disconnectDatabase(); process.exitCode = 1; } });
+async function shutdown(signal: string): Promise<void> { logger.info('Shutdown requested', { signal }); server.close(async () => { await disconnectDatabase(); }); }
+process.once('SIGINT', () => void shutdown('SIGINT')); process.once('SIGTERM', () => void shutdown('SIGTERM'));

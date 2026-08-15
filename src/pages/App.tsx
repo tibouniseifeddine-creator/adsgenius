@@ -1,25 +1,24 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Layout } from './components/layout/Layout';
-import { Dashboard } from './pages/Dashboard';
-import { Products } from './pages/Products';
-import { ProductAnalysis } from './pages/ProductAnalysis';
-import { CreativeStudio } from './pages/CreativeStudio';
-import { Copywriter } from './pages/Copywriter';
-import { AudienceLab } from './pages/AudienceLab';
-import { Campaigns } from './pages/Campaigns';
-import { CampaignBuilder } from './pages/CampaignBuilder';
-import { Orders } from './pages/Orders';
-import { Analytics } from './pages/Analytics';
-import { AIOptimizer } from './pages/AIOptimizer';
-import { Integrations } from './pages/Integrations';
-import { Settings } from './pages/Settings';
-import { Login } from './pages/Login';
-import { useAuth } from './contexts/AuthContext';
+import { Layout } from '../components/layout/Layout';
+import { Dashboard } from './Dashboard';
+import { Products } from './Products';
+import { ProductAnalysis } from './ProductAnalysis';
+import { CreativeStudio } from './CreativeStudio';
+import { Copywriter } from './Copywriter';
+import { AudienceLab } from './AudienceLab';
+import { Campaigns } from './Campaigns';
+import { CampaignBuilder } from './CampaignBuilder';
+import { Orders } from './Orders';
+import { Analytics } from './Analytics';
+import { AIOptimizer } from './AIOptimizer';
+import { Integrations } from './Integrations';
+import { Settings } from './Settings';
+import { Login } from './Login';
+import { useAuth } from '../contexts/AuthContext';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center">جاري التحميل...</div>;
+  const { isAuthenticated } = useAuth();
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 

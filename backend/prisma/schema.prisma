@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model InfrastructureState {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("infrastructure_state")
+}
+
+model User {
+  id           String            @id @default(uuid())
+  email        String            @unique
+  passwordHash String            @map("password_hash")
+  name         String
+  locale       String            @default("en")
+  timezone     String            @default("UTC")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  memberships  WorkspaceMember[]
+  sessions     AuthSession[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id                 String            @id @default(uuid())
+  name               String
+  slug               String            @unique
+  defaultCountryCode String            @default("DZ") @map("default_country_code")
+  defaultCurrency    String            @default("DZD") @db.VarChar(3) @map("default_currency")
+  timezone           String            @default("UTC")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  members            WorkspaceMember[]
+  auditLogs          AuditLog[]
+  products           Product[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String           @id @default(uuid())
+  workspaceId String           @map("workspace_id")
+  userId      String           @map("user_id")
+  role        WorkspaceRole
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId, status])
+  @@index([workspaceId, status])
+  @@map("workspace_members")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  accessTokenHash  String    @unique @map("access_token_hash")
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  expiresAt        DateTime  @map("expires_at")
+  refreshExpiresAt DateTime  @map("refresh_expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([refreshExpiresAt, revokedAt])
+  @@map("auth_sessions")
+}
+
+model AuditLog {
+  id                String     @id @default(uuid())
+  workspaceId       String?    @map("workspace_id")
+  userId            String?    @map("user_id")
+  action            String
+  entityType        String     @map("entity_type")
+  entityId          String?    @map("entity_id")
+  beforeJson        Json?      @map("before_json")
+  afterJson         Json?      @map("after_json")
+  requestReference  String?    @map("request_reference")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  workspace         Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model Product {
+  id                    String           @id @default(uuid())
+  workspaceId           String           @map("workspace_id")
+  name                  String
+  description           String           @default("")
+  sku                   String?
+  category              String?
+  baseCost              Decimal          @db.Decimal(18, 2) @map("base_cost")
+  salePrice             Decimal          @db.Decimal(18, 2) @map("sale_price")
+  currency              String           @db.VarChar(3)
+  stock                 Int              @default(0)
+  shippingCost          Decimal          @default(0) @db.Decimal(18, 2) @map("shipping_cost")
+  packagingCost         Decimal          @default(0) @db.Decimal(18, 2) @map("packaging_cost")
+  expectedCancellationRate Decimal       @default(0) @db.Decimal(5, 2) @map("expected_cancellation_rate")
+  expectedReturnRate    Decimal          @default(0) @db.Decimal(5, 2) @map("expected_return_rate")
+  active                Boolean          @default(true)
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+  workspace             Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  variants              ProductVariant[]
+
+  @@unique([workspaceId, sku])
+  @@index([workspaceId, active])
+  @@index([workspaceId, category])
+  @@map("products")
+}
+
+model ProductVariant {
+  id          String               @id @default(uuid())
+  productId   String               @map("product_id")
+  sku         String?
+  name        String
+  attributes  Json                 @default("{}")
+  baseCost    Decimal?             @db.Decimal(18, 2) @map("base_cost")
+  salePrice   Decimal?             @db.Decimal(18, 2) @map("sale_price")
+  stock       Int                  @default(0)
+  status      ProductVariantStatus @default(ACTIVE)
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  product     Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sku])
+  @@index([productId, status])
+  @@map("product_variants")
+}
