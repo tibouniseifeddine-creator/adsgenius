@@ -125,3 +125,9 @@
 - **Decision:** Campaign diagnosis may use the existing Phase 4 MOCK AI provider through the same AI orchestration boundary to produce an assistive explanation. Production AI providers remain deferred.
 - **Reason:** This validates the AI-assisted diagnosis contract without prematurely introducing provider credentials or production integrations.
 - **Consequence:** AI output is explicitly labeled as mock/assistive and cannot override deterministic analytics facts or execute external actions.
+
+## D023 — Phase 7 commercial outcomes and shipping boundary
+- **Status:** Accepted
+- **Decision:** Persist customers, orders, order items, shipments, profit records and attribution records as a separate commercial-outcome domain. Keep shipping provider behavior behind `ShippingAdapter`; Phase 7 ships only a non-networked MANUAL adapter until a real provider contract is verified.
+- **Reason:** The roadmap requires COD/order economics while explicitly requiring provider-specific shipping logic to remain isolated. Prematurely integrating a local carrier would create avoidable coupling and unverified external behavior.
+- **Consequence:** Expected and actual revenue/profit can now be reconciled from order lifecycle events. Real carrier integration is deferred to a verified adapter change rather than embedded in order logic.
