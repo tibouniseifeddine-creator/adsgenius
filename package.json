@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "install:clean": "npm ci",
+    "postinstall": "prisma generate --schema backend/prisma/schema.prisma",
     "dev": "vite",
     "dev:backend": "tsx watch backend/src/server.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\"",
