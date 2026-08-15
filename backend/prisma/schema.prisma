@@ -7,13 +7,44 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum WorkspaceRole { OWNER ADMIN MEMBER VIEWER }
-enum MembershipStatus { ACTIVE INVITED SUSPENDED }
-enum ProductVariantStatus { ACTIVE INACTIVE }
-enum CreativeStatus { DRAFT READY ARCHIVED }
-enum CreativeAssetType { IMAGE VIDEO AUDIO OTHER }
-enum AIProvider { MOCK OPENAI ANTHROPIC OTHER }
-enum AITaskStatus { PENDING RUNNING SUCCEEDED FAILED }
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+}
+enum CreativeStatus {
+  DRAFT
+  READY
+  ARCHIVED
+}
+enum CreativeAssetType {
+  IMAGE
+  VIDEO
+  AUDIO
+  OTHER
+}
+enum AIProvider {
+  MOCK
+  OPENAI
+  ANTHROPIC
+  OTHER
+}
+enum AITaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
 
 model InfrastructureState {
   key String @id
