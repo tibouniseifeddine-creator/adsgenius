@@ -1,4 +1,4 @@
-import type { ApiError, AuthMeResponse, AuthResponse, HealthResponse, Product, ProductInput, ProductVariant, ProductVariantInput } from '@adsgenius/shared-types';
+import type { Ad, AdInput, AdSet, AdSetInput, ApiError, Audience, AudienceInput, AuthMeResponse, AuthResponse, Campaign, CampaignInput, HealthResponse, Product, ProductInput, ProductVariant, ProductVariantInput } from '@adsgenius/shared-types';
 
 export interface ApiClientOptions { baseUrl: string; fetchImpl?: typeof fetch; }
 export class ApiClientError extends Error { readonly payload: ApiError; readonly status: number; constructor(status: number, payload: ApiError) { super(payload.error.message); this.name = 'ApiClientError'; this.status = status; this.payload = payload; } }
@@ -20,4 +20,22 @@ export class ApiClient {
   async createVariant(workspaceId: string, productId: string, input: ProductVariantInput): Promise<ProductVariant> { return this.request<ProductVariant>(`/api/v1/workspaces/${workspaceId}/products/${productId}/variants`, { method: 'POST', body: JSON.stringify(input) }); }
   async updateVariant(workspaceId: string, productId: string, variantId: string, input: Partial<ProductVariantInput>): Promise<ProductVariant> { return this.request<ProductVariant>(`/api/v1/workspaces/${workspaceId}/products/${productId}/variants/${variantId}`, { method: 'PATCH', body: JSON.stringify(input) }); }
   async deleteVariant(workspaceId: string, productId: string, variantId: string): Promise<void> { await this.request(`/api/v1/workspaces/${workspaceId}/products/${productId}/variants/${variantId}`, { method: 'DELETE' }); }
+  async listAudiences(workspaceId: string): Promise<Audience[]> { return (await this.request<{ data: Audience[] }>(`/api/v1/workspaces/${workspaceId}/audiences`)).data; }
+  async getAudience(workspaceId: string, audienceId: string): Promise<Audience> { return this.request<Audience>(`/api/v1/workspaces/${workspaceId}/audiences/${audienceId}`); }
+  async createAudience(workspaceId: string, input: AudienceInput): Promise<Audience> { return this.request<Audience>(`/api/v1/workspaces/${workspaceId}/audiences`, { method: 'POST', body: JSON.stringify(input) }); }
+  async updateAudience(workspaceId: string, audienceId: string, input: Partial<AudienceInput>): Promise<Audience> { return this.request<Audience>(`/api/v1/workspaces/${workspaceId}/audiences/${audienceId}`, { method: 'PATCH', body: JSON.stringify(input) }); }
+  async deleteAudience(workspaceId: string, audienceId: string): Promise<void> { await this.request(`/api/v1/workspaces/${workspaceId}/audiences/${audienceId}`, { method: 'DELETE' }); }
+  async listCampaigns(workspaceId: string): Promise<Campaign[]> { return (await this.request<{ data: Campaign[] }>(`/api/v1/workspaces/${workspaceId}/campaigns`)).data; }
+  async getCampaign(workspaceId: string, campaignId: string): Promise<Campaign> { return this.request<Campaign>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}`); }
+  async createCampaign(workspaceId: string, input: CampaignInput): Promise<Campaign> { return this.request<Campaign>(`/api/v1/workspaces/${workspaceId}/campaigns`, { method: 'POST', body: JSON.stringify(input) }); }
+  async updateCampaign(workspaceId: string, campaignId: string, input: Partial<CampaignInput>): Promise<Campaign> { return this.request<Campaign>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}`, { method: 'PATCH', body: JSON.stringify(input) }); }
+  async deleteCampaign(workspaceId: string, campaignId: string): Promise<void> { await this.request(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}`, { method: 'DELETE' }); }
+  async listAdSets(workspaceId: string, campaignId: string): Promise<AdSet[]> { return (await this.request<{ data: AdSet[] }>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets`)).data; }
+  async createAdSet(workspaceId: string, campaignId: string, input: AdSetInput): Promise<AdSet> { return this.request<AdSet>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets`, { method: 'POST', body: JSON.stringify(input) }); }
+  async updateAdSet(workspaceId: string, campaignId: string, adSetId: string, input: Partial<AdSetInput>): Promise<AdSet> { return this.request<AdSet>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}`, { method: 'PATCH', body: JSON.stringify(input) }); }
+  async deleteAdSet(workspaceId: string, campaignId: string, adSetId: string): Promise<void> { await this.request(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}`, { method: 'DELETE' }); }
+  async listAds(workspaceId: string, campaignId: string, adSetId: string): Promise<Ad[]> { return (await this.request<{ data: Ad[] }>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}/ads`)).data; }
+  async createAd(workspaceId: string, campaignId: string, adSetId: string, input: AdInput): Promise<Ad> { return this.request<Ad>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}/ads`, { method: 'POST', body: JSON.stringify(input) }); }
+  async updateAd(workspaceId: string, campaignId: string, adSetId: string, adId: string, input: Partial<AdInput>): Promise<Ad> { return this.request<Ad>(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}/ads/${adId}`, { method: 'PATCH', body: JSON.stringify(input) }); }
+  async deleteAd(workspaceId: string, campaignId: string, adSetId: string, adId: string): Promise<void> { await this.request(`/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/adsets/${adSetId}/ads/${adId}`, { method: 'DELETE' }); }
 }
