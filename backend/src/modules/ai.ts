@@ -4,8 +4,7 @@ import { AppError } from '../shared/errors.js';
 import type { AuthContext } from './auth.js';
 import { requireWorkspaceAccess } from './workspaces.js';
 
-export type AICapability = 'product_analysis' | 'creative_idea' | 'copy_generation' | 'creative_analysis';
-
+export type AICapability = 'product_analysis' | 'creative_idea' | 'copy_generation' | 'creative_analysis' | 'campaign_diagnosis';
 type AIInput = Record<string, unknown>;
 
 export interface AIProviderAdapter {
@@ -13,16 +12,25 @@ export interface AIProviderAdapter {
   generate(capability: AICapability, input: AIInput, promptTemplate: string): Promise<{ output: Record<string, unknown>; inputTokens: number; outputTokens: number }>;
 }
 
-/** Phase 4 deliberately ships only a MOCK provider. Production providers belong behind this interface. */
+/** Phase 6 continues to use the Phase 4 MOCK provider. Production providers remain deferred. */
 export const mockAIProvider: AIProviderAdapter = {
   provider: 'MOCK',
   async generate(capability, input) {
     const subject = typeof input.productName === 'string' ? input.productName : typeof input.creativeName === 'string' ? input.creativeName : 'the product';
+    const causes = Array.isArray(input.candidateCauses) ? input.candidateCauses : [];
+    const recommendations = Array.isArray(input.recommendations) ? input.recommendations : [];
     const outputs: Record<AICapability, Record<string, unknown>> = {
       product_analysis: { type: 'hypothesis', sellingPoints: [], painPoints: [], objections: [], positioning: `Explore a clear value proposition for ${subject}.`, angles: [], targetCustomerHypotheses: [], disclaimer: 'MOCK output; not market-validated.' },
       creative_idea: { ideas: [{ angle: 'problem-solution', hook: `A practical reason to consider ${subject}`, format: 'short_video' }], disclaimer: 'MOCK output; requires validation.' },
       copy_generation: { primaryText: `Discover a practical way to use ${subject}.`, headline: `Try ${subject}`, cta: 'Learn More', disclaimer: 'MOCK output; requires review.' },
       creative_analysis: { strengths: [], weaknesses: [], likelyVariables: [], confidence: 0, disclaimer: 'MOCK output; no performance data was analyzed.' },
+      campaign_diagnosis: {
+        summary: causes.length ? 'The available performance evidence indicates one or more measurable changes that warrant review.' : 'No strong root-cause signal was established from the available data window.',
+        rootCauses: causes,
+        recommendations,
+        confidence: typeof input.confidence === 'number' ? input.confidence : 0,
+        disclaimer: 'MOCK output; this explanation is assistive and must not be treated as confirmed causality.',
+      },
     };
     const output = outputs[capability];
     const inputTokens = JSON.stringify(input).length;
@@ -32,7 +40,7 @@ export const mockAIProvider: AIProviderAdapter = {
 };
 
 function validateCapability(value: unknown): AICapability {
-  if (value === 'product_analysis' || value === 'creative_idea' || value === 'copy_generation' || value === 'creative_analysis') return value;
+  if (value === 'product_analysis' || value === 'creative_idea' || value === 'copy_generation' || value === 'creative_analysis' || value === 'campaign_diagnosis') return value;
   throw new AppError('VALIDATION_ERROR', 'Unsupported AI capability.', 400);
 }
 
