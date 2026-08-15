@@ -71,3 +71,15 @@
 - **Decision:** Introduce interfaces for object storage and background jobs without selecting production vendors yet.
 - **Reason:** The architecture requires these boundaries, while the roadmap intentionally leaves the queue/storage technology open until infrastructure constraints are evaluated.
 - **Consequence:** In-memory/no-op implementations are limited to development scaffolding and cannot be treated as production integrations.
+
+## D014 — Phase 3 product economics model
+- **Status:** Accepted
+- **Decision:** Persist products and variants in PostgreSQL under workspace ownership, use Prisma Decimal for monetary fields, and calculate expected net margin/break-even from base cost, fulfillment costs, and expected cancellation/return rates.
+- **Reason:** Phase 3 requires precise monetary handling and economics that reflect the COD-oriented business model rather than demo-only prices.
+- **Consequence:** Product calculations remain provider-neutral. Shipping-provider and actual order outcomes are deferred to Phase 7, where expected versus actual profit can be reconciled.
+
+## D015 — Phase 3 prototype migration boundary
+- **Status:** Accepted
+- **Decision:** Migrate the Products screen to the persisted API while preserving the broader prototype UI and DemoContext for features not yet covered by their roadmap phases.
+- **Reason:** Phase 3 requires core product operations to stop depending on demo product state without prematurely rewriting unrelated screens.
+- **Consequence:** Later phases can migrate other domains incrementally behind the same API/shared-contract pattern.
