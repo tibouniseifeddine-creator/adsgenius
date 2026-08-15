@@ -1,6 +1,9 @@
 type ApiErrorCode =
   | 'BAD_REQUEST'
   | 'VALIDATION_ERROR'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'CONFLICT'
   | 'NOT_FOUND'
   | 'INTERNAL_ERROR'
   | 'SERVICE_UNAVAILABLE';
