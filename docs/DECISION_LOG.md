@@ -107,3 +107,21 @@
 - **Decision:** A campaign cannot become READY or ACTIVE unless it contains at least one ad set and every ad set contains at least one ad with workspace-valid creative/copy references.
 - **Reason:** Prevent incomplete campaign structures from being treated as launchable while external publishing remains intentionally out of scope.
 - **Consequence:** The campaign builder creates the hierarchy as DRAFT, then promotes it to READY only after the server-side validation gate passes.
+
+## D020 — Phase 6 analytics normalization and diagnosis boundary
+- **Status:** Accepted
+- **Decision:** Introduce `PerformanceSnapshot` as the normalized analytics ingestion boundary, with explicit metric provenance and deterministic KPI calculations. Campaign diagnosis is persisted separately as evidence-backed `PerformanceDiagnosis` records with `AnalyticsRecommendation` children.
+- **Reason:** Phase 6 must distinguish reported, calculated and estimated information and preserve the exact data window/evidence used for diagnosis.
+- **Consequence:** Analytics logic remains provider-neutral. External advertising integrations are not introduced in Phase 6; snapshots can be ingested by future adapters without coupling the domain to Meta or another provider.
+
+## D021 — Phase 6 recommendation safety
+- **Status:** Accepted
+- **Decision:** Phase 6 recommendations are advisory only and require approval by default. No recommendation endpoint executes an external campaign mutation.
+- **Reason:** The Master Spec requires controlled, auditable automation and Phase 8 is the first dedicated real Meta integration phase.
+- **Consequence:** Campaign Detective can identify evidence-backed next actions now, while actual external execution remains deferred.
+
+## D022 — Phase 6 AI explanation boundary
+- **Status:** Accepted
+- **Decision:** Campaign diagnosis may use the existing Phase 4 MOCK AI provider through the same AI orchestration boundary to produce an assistive explanation. Production AI providers remain deferred.
+- **Reason:** This validates the AI-assisted diagnosis contract without prematurely introducing provider credentials or production integrations.
+- **Consequence:** AI output is explicitly labeled as mock/assistive and cannot override deterministic analytics facts or execute external actions.
