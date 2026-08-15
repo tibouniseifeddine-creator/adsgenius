@@ -7,37 +7,422 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum WorkspaceRole { OWNER ADMIN MEMBER VIEWER }
-enum MembershipStatus { ACTIVE INVITED SUSPENDED }
-enum ProductVariantStatus { ACTIVE INACTIVE }
-enum CreativeStatus { DRAFT READY ARCHIVED }
-enum CreativeAssetType { IMAGE VIDEO AUDIO OTHER }
-enum AIProvider { MOCK OPENAI ANTHROPIC OTHER }
-enum AITaskStatus { PENDING RUNNING SUCCEEDED FAILED }
-enum AudienceType { BROAD INTERESTS CUSTOM LOOKALIKE RETARGETING }
-enum AudienceStatus { ACTIVE ARCHIVED }
-enum CampaignObjective { SALES LEADS MESSAGES TRAFFIC WEBSITE_CONVERSIONS }
-enum CampaignStatus { DRAFT READY ACTIVE PAUSED ARCHIVED }
-enum CampaignBudgetType { DAILY LIFETIME }
-enum AdSetStatus { DRAFT ACTIVE PAUSED ARCHIVED }
-enum AdStatus { DRAFT ACTIVE PAUSED ARCHIVED }
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+}
+enum CreativeStatus {
+  DRAFT
+  READY
+  ARCHIVED
+}
+enum CreativeAssetType {
+  IMAGE
+  VIDEO
+  AUDIO
+  OTHER
+}
+enum AIProvider {
+  MOCK
+  OPENAI
+  ANTHROPIC
+  OTHER
+}
+enum AITaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+enum AudienceType {
+  BROAD
+  INTERESTS
+  CUSTOM
+  LOOKALIKE
+  RETARGETING
+}
+enum AudienceStatus {
+  ACTIVE
+  ARCHIVED
+}
+enum CampaignObjective {
+  SALES
+  LEADS
+  MESSAGES
+  TRAFFIC
+  WEBSITE_CONVERSIONS
+}
+enum CampaignStatus {
+  DRAFT
+  READY
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+enum CampaignBudgetType {
+  DAILY
+  LIFETIME
+}
+enum AdSetStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+enum AdStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
 
-model InfrastructureState { key String @id value String createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") @@map("infrastructure_state") }
-model User { id String @id @default(uuid()) email String @unique passwordHash String @map("password_hash") name String locale String @default("en") timezone String @default("UTC") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") memberships WorkspaceMember[] sessions AuthSession[] auditLogs AuditLog[] aiTasks AITask[] @@map("users") }
-model Workspace { id String @id @default(uuid()) name String slug String @unique defaultCountryCode String @default("DZ") @map("default_country_code") defaultCurrency String @default("DZD") @db.VarChar(3) @map("default_currency") timezone String @default("UTC") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") members WorkspaceMember[] auditLogs AuditLog[] products Product[] creatives Creative[] audiences Audience[] campaigns Campaign[] aiTasks AITask[] @@map("workspaces") }
-model WorkspaceMember { id String @id @default(uuid()) workspaceId String @map("workspace_id") userId String @map("user_id") role WorkspaceRole status MembershipStatus @default(ACTIVE) createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) user User @relation(fields: [userId], references: [id], onDelete: Cascade) @@unique([workspaceId, userId]) @@index([userId, status]) @@index([workspaceId, status]) @@map("workspace_members") }
-model AuthSession { id String @id @default(uuid()) userId String @map("user_id") accessTokenHash String @unique @map("access_token_hash") refreshTokenHash String @unique @map("refresh_token_hash") expiresAt DateTime @map("expires_at") refreshExpiresAt DateTime @map("refresh_expires_at") revokedAt DateTime? @map("revoked_at") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") user User @relation(fields: [userId], references: [id], onDelete: Cascade) @@index([userId, revokedAt]) @@index([refreshExpiresAt, revokedAt]) @@map("auth_sessions") }
-model AuditLog { id String @id @default(uuid()) workspaceId String? @map("workspace_id") userId String? @map("user_id") action String entityType String @map("entity_type") entityId String? @map("entity_id") beforeJson Json? @map("before_json") afterJson Json? @map("after_json") requestReference String? @map("request_reference") createdAt DateTime @default(now()) @map("created_at") workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull) user User? @relation(fields: [userId], references: [id], onDelete: SetNull) @@index([workspaceId, createdAt]) @@index([userId, createdAt]) @@map("audit_logs") }
-model Product { id String @id @default(uuid()) workspaceId String @map("workspace_id") name String description String @default("") sku String? category String? baseCost Decimal @db.Decimal(18, 2) @map("base_cost") salePrice Decimal @db.Decimal(18, 2) @db.Decimal(18, 2) @map("sale_price") currency String @db.VarChar(3) stock Int @default(0) shippingCost Decimal @default(0) @db.Decimal(18, 2) @map("shipping_cost") packagingCost Decimal @default(0) @db.Decimal(18, 2) @map("packaging_cost") expectedCancellationRate Decimal @default(0) @db.Decimal(5, 2) @map("expected_cancellation_rate") expectedReturnRate Decimal @default(0) @db.Decimal(5, 2) @map("expected_return_rate") active Boolean @default(true) createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) variants ProductVariant[] creatives Creative[] campaigns Campaign[] @@unique([workspaceId, sku]) @@index([workspaceId, active]) @@index([workspaceId, category]) @@map("products") }
-model ProductVariant { id String @id @default(uuid()) productId String @map("product_id") sku String? name String attributes Json @default("{}") baseCost Decimal? @db.Decimal(18, 2) @map("base_cost") salePrice Decimal? @db.Decimal(18, 2) @map("sale_price") stock Int @default(0) status ProductVariantStatus @default(ACTIVE) createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") product Product @relation(fields: [productId], references: [id], onDelete: Cascade) @@unique([productId, sku]) @@index([productId, status]) @@map("product_variants") }
-model Creative { id String @id @default(uuid()) workspaceId String @map("workspace_id") productId String? @map("product_id") name String status CreativeStatus @default(DRAFT) angle String? hook String? createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) product Product? @relation(fields: [productId], references: [id], onDelete: SetNull) versions CreativeVersion[] assets CreativeAsset[] copies CreativeCopy[] aiTasks AITask[] @@index([workspaceId, status]) @@index([workspaceId, productId]) @@map("creatives") }
-model CreativeVersion { id String @id @default(uuid()) creativeId String @map("creative_id") version Int changeNote String? @map("change_note") metadata Json @default("{}") createdAt DateTime @default(now()) @map("created_at") creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade) assets CreativeAsset[] copies CreativeCopy[] ads Ad[] @@unique([creativeId, version]) @@index([creativeId, createdAt]) @@map("creative_versions") }
-model CreativeAsset { id String @id @default(uuid()) creativeId String @map("creative_id") versionId String? @map("version_id") type CreativeAssetType storageKey String? @map("storage_key") externalUrl String? @map("external_url") mimeType String? @map("mime_type") metadata Json @default("{}") createdAt DateTime @default(now()) @map("created_at") creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade) version CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull) @@index([creativeId, createdAt]) @@index([versionId]) @@map("creative_assets") }
-model CreativeCopy { id String @id @default(uuid()) creativeId String @map("creative_id") versionId String? @map("version_id") primaryText String? @map("primary_text") headline String? cta String? language String @default("en") metadata Json @default("{}") createdAt DateTime @default(now()) @map("created_at") creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade) version CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull) ads Ad[] @@index([creativeId, createdAt]) @@index([versionId]) @@map("creative_copies") }
-model Audience { id String @id @default(uuid()) workspaceId String @map("workspace_id") name String type AudienceType definition Json @default("{}") status AudienceStatus @default(ACTIVE) createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) adSets AdSet[] @@unique([workspaceId, name]) @@index([workspaceId, status]) @@map("audiences") }
-model Campaign { id String @id @default(uuid()) workspaceId String @map("workspace_id") productId String? @map("product_id") name String objective CampaignObjective status CampaignStatus @default(DRAFT) budgetType CampaignBudgetType budgetAmount Decimal @db.Decimal(18, 2) @map("budget_amount") currency String @db.VarChar(3) startAt DateTime? @map("start_at") endAt DateTime? @map("end_at") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) product Product? @relation(fields: [productId], references: [id], onDelete: SetNull) adSets AdSet[] @@index([workspaceId, status]) @@index([workspaceId, productId]) @@map("campaigns") }
-model AdSet { id String @id @default(uuid()) campaignId String @map("campaign_id") audienceId String? @map("audience_id") name String status AdSetStatus @default(DRAFT) budgetAmount Decimal? @db.Decimal(18, 2) @map("budget_amount") targeting Json @default("{}") placements Json @default("{}") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade) audience Audience? @relation(fields: [audienceId], references: [id], onDelete: SetNull) ads Ad[] @@index([campaignId, status]) @@index([audienceId]) @@map("ad_sets") }
-model Ad { id String @id @default(uuid()) adSetId String @map("adset_id") creativeVersionId String? @map("creative_version_id") copyAssetId String? @map("copy_asset_id") name String status AdStatus @default(DRAFT) destinationUrl String? @map("destination_url") trackingConfig Json @default("{}") @map("tracking_config") createdAt DateTime @default(now()) @map("created_at") updatedAt DateTime @updatedAt @map("updated_at") adSet AdSet @relation(fields: [adSetId], references: [id], onDelete: Cascade) creativeVersion CreativeVersion? @relation(fields: [creativeVersionId], references: [id], onDelete: SetNull) copyAsset CreativeCopy? @relation(fields: [copyAssetId], references: [id], onDelete: SetNull) @@index([adSetId, status]) @@index([creativeVersionId]) @@index([copyAssetId]) @@map("ads") }
-model AIPromptVersion { id String @id @default(uuid()) capability String version String template String active Boolean @default(true) createdAt DateTime @default(now()) @map("created_at") aiTasks AITask[] @@unique([capability, version]) @@index([capability, active]) @@map("ai_prompt_versions") }
-model AITask { id String @id @default(uuid()) workspaceId String @map("workspace_id") userId String? @map("user_id") creativeId String? @map("creative_id") promptVersionId String? @map("prompt_version_id") capability String provider AIProvider model String status AITaskStatus @default(PENDING) inputJson Json @map("input_json") outputJson Json? @map("output_json") errorCode String? @map("error_code") errorMessage String? @map("error_message") startedAt DateTime? @map("started_at") completedAt DateTime? @map("completed_at") createdAt DateTime @default(now()) @map("created_at") workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade) user User? @relation(fields: [userId], references: [id], onDelete: SetNull) creative Creative? @relation(fields: [creativeId], references: [id], onDelete: SetNull) promptVersion AIPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull) usage AIUsage? @@index([workspaceId, createdAt]) @@index([workspaceId, capability, status]) @@map("ai_tasks") }
-model AIUsage { id String @id @default(uuid()) taskId String @unique @map("task_id") inputTokens Int @default(0) @map("input_tokens") outputTokens Int @default(0) @map("output_tokens") estimatedCost Decimal? @db.Decimal(18, 8) @map("estimated_cost") currency String @default("USD") @db.VarChar(3) createdAt DateTime @default(now()) @map("created_at") task AITask @relation(fields: [taskId], references: [id], onDelete: Cascade) @@map("ai_usage") }
+model InfrastructureState {
+  key String @id
+  value String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("infrastructure_state")
+}
+
+model User {
+  id String @id @default(uuid())
+  email String @unique
+  passwordHash String @map("password_hash")
+  name String
+  locale String @default("en")
+  timezone String @default("UTC")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  memberships WorkspaceMember[]
+  sessions AuthSession[]
+  auditLogs AuditLog[]
+  aiTasks AITask[]
+  @@map("users")
+}
+
+model Workspace {
+  id String @id @default(uuid())
+  name String
+  slug String @unique
+  defaultCountryCode String @default("DZ") @map("default_country_code")
+  defaultCurrency String @default("DZD") @db.VarChar(3) @map("default_currency")
+  timezone String @default("UTC")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  members WorkspaceMember[]
+  auditLogs AuditLog[]
+  products Product[]
+  creatives Creative[]
+  audiences Audience[]
+  campaigns Campaign[]
+  aiTasks AITask[]
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  userId String @map("user_id")
+  role WorkspaceRole
+  status MembershipStatus @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, userId])
+  @@index([userId, status])
+  @@index([workspaceId, status])
+  @@map("workspace_members")
+}
+
+model AuthSession {
+  id String @id @default(uuid())
+  userId String @map("user_id")
+  accessTokenHash String @unique @map("access_token_hash")
+  refreshTokenHash String @unique @map("refresh_token_hash")
+  expiresAt DateTime @map("expires_at")
+  refreshExpiresAt DateTime @map("refresh_expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt])
+  @@index([refreshExpiresAt, revokedAt])
+  @@map("auth_sessions")
+}
+
+model AuditLog {
+  id String @id @default(uuid())
+  workspaceId String? @map("workspace_id")
+  userId String? @map("user_id")
+  action String
+  entityType String @map("entity_type")
+  entityId String? @map("entity_id")
+  beforeJson Json? @map("before_json")
+  afterJson Json? @map("after_json")
+  requestReference String? @map("request_reference")
+  createdAt DateTime @default(now()) @map("created_at")
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([workspaceId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model Product {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  name String
+  description String @default("")
+  sku String?
+  category String?
+  baseCost Decimal @db.Decimal(18, 2) @map("base_cost")
+  salePrice Decimal @db.Decimal(18, 2) @map("sale_price")
+  currency String @db.VarChar(3)
+  stock Int @default(0)
+  shippingCost Decimal @default(0) @db.Decimal(18, 2) @map("shipping_cost")
+  packagingCost Decimal @default(0) @db.Decimal(18, 2) @map("packaging_cost")
+  expectedCancellationRate Decimal @default(0) @db.Decimal(5, 2) @map("expected_cancellation_rate")
+  expectedReturnRate Decimal @default(0) @db.Decimal(5, 2) @map("expected_return_rate")
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  variants ProductVariant[]
+  creatives Creative[]
+  campaigns Campaign[]
+  @@unique([workspaceId, sku])
+  @@index([workspaceId, active])
+  @@index([workspaceId, category])
+  @@map("products")
+}
+
+model ProductVariant {
+  id String @id @default(uuid())
+  productId String @map("product_id")
+  sku String?
+  name String
+  attributes Json @default("{}")
+  baseCost Decimal? @db.Decimal(18, 2) @map("base_cost")
+  salePrice Decimal? @db.Decimal(18, 2) @map("sale_price")
+  stock Int @default(0)
+  status ProductVariantStatus @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@unique([productId, sku])
+  @@index([productId, status])
+  @@map("product_variants")
+}
+
+model Creative {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  productId String? @map("product_id")
+  name String
+  status CreativeStatus @default(DRAFT)
+  angle String?
+  hook String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  versions CreativeVersion[]
+  assets CreativeAsset[]
+  copies CreativeCopy[]
+  aiTasks AITask[]
+  @@index([workspaceId, status])
+  @@index([workspaceId, productId])
+  @@map("creatives")
+}
+
+model CreativeVersion {
+  id String @id @default(uuid())
+  creativeId String @map("creative_id")
+  version Int
+  changeNote String? @map("change_note")
+  metadata Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  assets CreativeAsset[]
+  copies CreativeCopy[]
+  ads Ad[]
+  @@unique([creativeId, version])
+  @@index([creativeId, createdAt])
+  @@map("creative_versions")
+}
+
+model CreativeAsset {
+  id String @id @default(uuid())
+  creativeId String @map("creative_id")
+  versionId String? @map("version_id")
+  type CreativeAssetType
+  storageKey String? @map("storage_key")
+  externalUrl String? @map("external_url")
+  mimeType String? @map("mime_type")
+  metadata Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  version CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  @@index([creativeId, createdAt])
+  @@index([versionId])
+  @@map("creative_assets")
+}
+
+model CreativeCopy {
+  id String @id @default(uuid())
+  creativeId String @map("creative_id")
+  versionId String? @map("version_id")
+  primaryText String? @map("primary_text")
+  headline String?
+  cta String?
+  language String @default("en")
+  metadata Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  creative Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  version CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  ads Ad[]
+  @@index([creativeId, createdAt])
+  @@index([versionId])
+  @@map("creative_copies")
+}
+
+model Audience {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  name String
+  type AudienceType
+  definition Json @default("{}")
+  status AudienceStatus @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adSets AdSet[]
+  @@unique([workspaceId, name])
+  @@index([workspaceId, status])
+  @@map("audiences")
+}
+
+model Campaign {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  productId String? @map("product_id")
+  name String
+  objective CampaignObjective
+  status CampaignStatus @default(DRAFT)
+  budgetType CampaignBudgetType
+  budgetAmount Decimal @db.Decimal(18, 2) @map("budget_amount")
+  currency String @db.VarChar(3)
+  startAt DateTime? @map("start_at")
+  endAt DateTime? @map("end_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  adSets AdSet[]
+  @@index([workspaceId, status])
+  @@index([workspaceId, productId])
+  @@map("campaigns")
+}
+
+model AdSet {
+  id String @id @default(uuid())
+  campaignId String @map("campaign_id")
+  audienceId String? @map("audience_id")
+  name String
+  status AdSetStatus @default(DRAFT)
+  budgetAmount Decimal? @db.Decimal(18, 2) @map("budget_amount")
+  targeting Json @default("{}")
+  placements Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  audience Audience? @relation(fields: [audienceId], references: [id], onDelete: SetNull)
+  ads Ad[]
+  @@index([campaignId, status])
+  @@index([audienceId])
+  @@map("ad_sets")
+}
+
+model Ad {
+  id String @id @default(uuid())
+  adSetId String @map("adset_id")
+  creativeVersionId String? @map("creative_version_id")
+  copyAssetId String? @map("copy_asset_id")
+  name String
+  status AdStatus @default(DRAFT)
+  destinationUrl String? @map("destination_url")
+  trackingConfig Json @default("{}") @map("tracking_config")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  adSet AdSet @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+  creativeVersion CreativeVersion? @relation(fields: [creativeVersionId], references: [id], onDelete: SetNull)
+  copyAsset CreativeCopy? @relation(fields: [copyAssetId], references: [id], onDelete: SetNull)
+  @@index([adSetId, status])
+  @@index([creativeVersionId])
+  @@index([copyAssetId])
+  @@map("ads")
+}
+
+model AIPromptVersion {
+  id String @id @default(uuid())
+  capability String
+  version String
+  template String
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  aiTasks AITask[]
+  @@unique([capability, version])
+  @@index([capability, active])
+  @@map("ai_prompt_versions")
+}
+
+model AITask {
+  id String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  userId String? @map("user_id")
+  creativeId String? @map("creative_id")
+  promptVersionId String? @map("prompt_version_id")
+  capability String
+  provider AIProvider
+  model String
+  status AITaskStatus @default(PENDING)
+  inputJson Json @map("input_json")
+  outputJson Json? @map("output_json")
+  errorCode String? @map("error_code")
+  errorMessage String? @map("error_message")
+  startedAt DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  creative Creative? @relation(fields: [creativeId], references: [id], onDelete: SetNull)
+  promptVersion AIPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+  usage AIUsage?
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, capability, status])
+  @@map("ai_tasks")
+}
+
+model AIUsage {
+  id String @id @default(uuid())
+  taskId String @unique @map("task_id")
+  inputTokens Int @default(0) @map("input_tokens")
+  outputTokens Int @default(0) @map("output_tokens")
+  estimatedCost Decimal? @db.Decimal(18, 8) @map("estimated_cost")
+  currency String @default("USD") @db.VarChar(3)
+  createdAt DateTime @default(now()) @map("created_at")
+  task AITask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@map("ai_usage")
+}
