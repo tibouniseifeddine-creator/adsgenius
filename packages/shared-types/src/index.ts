@@ -3,7 +3,10 @@ export type ApiErrorCode =
   | 'VALIDATION_ERROR'
   | 'NOT_FOUND'
   | 'INTERNAL_ERROR'
-  | 'SERVICE_UNAVAILABLE';
+  | 'SERVICE_UNAVAILABLE'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'CONFLICT';
 
 export interface ApiError {
   error: {
@@ -31,4 +34,57 @@ export interface Pagination {
 export interface ApiCollection<T> {
   data: T[];
   pagination: Pagination;
+}
+
+export interface ProductVariant {
+  id: string;
+  productId: string;
+  sku: string | null;
+  name: string;
+  attributes: Record<string, unknown>;
+  baseCost: string | null;
+  salePrice: string | null;
+  stock: number;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Product {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  sku: string | null;
+  category: string | null;
+  baseCost: string;
+  salePrice: string;
+  currency: string;
+  stock: number;
+  shippingCost: string;
+  packagingCost: string;
+  expectedCancellationRate: string;
+  expectedReturnRate: string;
+  active: boolean;
+  breakEvenPrice: string;
+  expectedNetMargin: string;
+  variants?: ProductVariant[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductInput {
+  name: string;
+  description?: string;
+  sku?: string;
+  category?: string;
+  baseCost: number | string;
+  salePrice: number | string;
+  currency?: string;
+  stock?: number;
+  shippingCost?: number | string;
+  packagingCost?: number | string;
+  expectedCancellationRate?: number | string;
+  expectedReturnRate?: number | string;
+  active?: boolean;
 }
