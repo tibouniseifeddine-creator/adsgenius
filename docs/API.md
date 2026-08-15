@@ -1,6 +1,6 @@
 # AdsGenius — API Contract Baseline V1
 
-**Status:** Design baseline — no production API implementation implied
+**Status:** Design baseline — incremental implementation in progress
 
 ## 1. API Principles
 
@@ -120,6 +120,32 @@ External publishing must pass authorization checks and must create an audit reco
 
 ## 9. Analytics
 
+Phase 6 adds the first persisted analytics/diagnosis contract without introducing a production advertising-provider integration.
+
+```text
+POST /api/v1/workspaces/:workspaceId/analytics/snapshots
+GET  /api/v1/workspaces/:workspaceId/analytics/campaigns/:campaignId
+POST /api/v1/workspaces/:workspaceId/analytics/campaigns/:campaignId/diagnose
+GET  /api/v1/workspaces/:workspaceId/analytics/diagnostics
+GET  /api/v1/workspaces/:workspaceId/analytics/creative-fatigue
+POST /api/v1/workspaces/:workspaceId/analytics/creative-fatigue/:creativeVersionId
+```
+
+Analytics snapshots preserve provider/source provenance and a defined time window. Missing metrics remain unknown rather than being converted to zero. Normalized KPIs are calculated deterministically from the available metrics.
+
+Diagnosis records preserve:
+- data window
+- observed facts
+- candidate causes
+- confidence
+- evidence snapshot IDs
+- recommendations
+- optional mock-AI explanation/task reference
+
+Recommendations are advisory only in Phase 6 and do not execute external advertising changes.
+
+## 10. Campaign Monitoring
+
 ```text
 GET /api/v1/workspaces/:workspaceId/analytics/overview
 GET /api/v1/workspaces/:workspaceId/analytics/campaigns/:campaignId
@@ -135,7 +161,7 @@ Analytics responses should distinguish:
 - estimated metrics
 - actual commercial outcomes
 
-## 10. Customers / Orders / Shipments
+## 11. Customers / Orders / Shipments
 
 ```text
 GET    /api/v1/workspaces/:workspaceId/customers
@@ -150,7 +176,7 @@ POST   /api/v1/workspaces/:workspaceId/shipments
 
 Provider-specific shipment operations remain behind the shipping integration module.
 
-## 11. Integrations
+## 12. Integrations
 
 ```text
 GET    /api/v1/workspaces/:workspaceId/integrations
@@ -162,7 +188,7 @@ POST   /api/v1/workspaces/:workspaceId/integrations/:integrationId/sync
 
 OAuth authorization flows may use dedicated routes/callbacks as required by the provider.
 
-## 12. AI
+## 13. AI
 
 AI endpoints should represent capabilities, not expose raw provider APIs.
 
@@ -180,7 +206,7 @@ GET  /api/v1/workspaces/:workspaceId/ai/memory
 
 Long-running operations should return a job reference when necessary.
 
-## 13. Jobs
+## 14. Jobs
 
 Conceptual endpoints:
 
@@ -197,7 +223,7 @@ Jobs may be used for:
 - creative processing
 - bulk operations
 
-## 14. Automations
+## 15. Automations
 
 ```text
 GET    /api/v1/workspaces/:workspaceId/automations
@@ -210,7 +236,7 @@ POST   /api/v1/workspaces/:workspaceId/automations/:automationId/test
 
 Automation execution must respect the configured AI-agent permission level and produce an audit record for consequential actions.
 
-## 15. Notifications
+## 16. Notifications
 
 ```text
 GET  /api/v1/workspaces/:workspaceId/notifications
@@ -218,7 +244,7 @@ POST /api/v1/workspaces/:workspaceId/notifications/:notificationId/read
 POST /api/v1/workspaces/:workspaceId/notifications/read-all
 ```
 
-## 16. Health
+## 17. Health
 
 ```text
 GET /api/v1/health
@@ -226,7 +252,7 @@ GET /api/v1/health
 
 Health should expose safe service status only and must not leak credentials or sensitive infrastructure details.
 
-## 17. Error Envelope
+## 18. Error Envelope
 
 Preferred shape:
 
@@ -243,7 +269,7 @@ Preferred shape:
 
 Do not expose stack traces or secret values in production responses.
 
-## 18. Pagination
+## 19. Pagination
 
 Collection endpoints should support a consistent pagination model.
 
@@ -262,7 +288,7 @@ Conceptual response:
 
 Cursor pagination may be preferred for large analytics/event datasets.
 
-## 19. Idempotency
+## 20. Idempotency
 
 Operations that can create external side effects should support idempotency where appropriate, especially:
 - publish
@@ -271,7 +297,9 @@ Operations that can create external side effects should support idempotency wher
 - shipment creation
 - payment/subscription operations
 
-## 20. Webhooks
+Analytics snapshot ingestion is idempotent for the same workspace/entity/provider/time-window key.
+
+## 21. Webhooks
 
 External provider webhooks must be handled through dedicated integration modules.
 
@@ -283,7 +311,7 @@ Requirements:
 - Retry strategy
 - Safe failure handling
 
-## 21. API Contract Governance
+## 22. API Contract Governance
 
 Before implementation of a public endpoint, define:
 - request schema
@@ -299,7 +327,7 @@ Before implementation of a public endpoint, define:
 
 OpenAPI should be generated or maintained as part of implementation so the contract remains reviewable.
 
-## 22. Out of Scope for This Baseline
+## 23. Out of Scope for This Baseline
 
 Not frozen yet:
 - Exact authentication provider
@@ -309,6 +337,4 @@ Not frozen yet:
 - Exact webhook event catalog
 - Final Meta API version/endpoints
 - Final billing provider
-- Final AI provider/model selection
-
-These follow after the approved architecture and integration research.
+- Final production AI provider/model selection
