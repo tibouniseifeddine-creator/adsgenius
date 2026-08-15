@@ -60,3 +60,17 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Backend health smoke test
+        run: |
+          npm run start:backend > /tmp/adsgenius-api.log 2>&1 &
+          pid=$!
+          trap 'kill $pid || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/v1/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/adsgenius-api.log
+          exit 1
