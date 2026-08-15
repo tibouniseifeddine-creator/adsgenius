@@ -11,13 +11,13 @@ Read these before making implementation changes:
 3. `IMPLEMENTATION_ROADMAP_V1.md` — phased execution plan and Definition of Done for each phase.
 4. `ARCHITECTURE_V2.md` — target architecture baseline; not a claim that the current repository already implements it.
 5. `PRODUCT_REQUIREMENTS_V2.md` — prioritized product requirements and acceptance criteria.
-6. `DATABASE.md` — production domain/database design baseline; no production schema is implemented by this document.
-7. `API.md` — versioned API contract baseline; no production backend is implied by this document.
+6. `DATABASE.md` — production domain/database design baseline; database migration is being introduced incrementally from Phase 1 onward.
+7. `API.md` — versioned API contract baseline.
 8. `DECISION_LOG.md` — accepted and provisional decisions with their context and consequences.
 
 ## Phase 0 engineering commands
 
-The current repository remains a single React/Vite package. npm is retained for this phase because it matches the existing lockfile and avoids a premature workspace migration while the prototype is preserved.
+The Phase 0 prototype remains runnable with Vite. The repository now also has npm workspaces for the Phase 1 backend and shared packages.
 
 ```bash
 npm install
@@ -28,15 +28,34 @@ npm run test
 npm run build
 ```
 
+For backend development:
+
+```bash
+npm run dev:backend
+npm run start:backend
+```
+
 For a clean CI-style install when the lockfile is synchronized with `package.json`:
 
 ```bash
 npm run install:clean
 ```
 
+## Phase 1 database commands
+
+Set `DATABASE_URL` to a development PostgreSQL database, then run:
+
+```bash
+npm run db:generate
+npm run db:migrate:deploy
+npm run db:seed
+```
+
+The Phase 1 migration is intentionally infrastructure-only. Product/domain tables remain deferred to the feature phases defined in the roadmap.
+
 ### Workspace strategy
 
-The approved target architecture is expected to evolve into a multi-package repository with shared client, backend, and packages. That migration is intentionally deferred until the relevant architecture implementation phase. Do not create placeholder workspaces or move the existing prototype solely to satisfy the target tree.
+Phase 1 introduces npm workspaces because the approved target architecture now requires a backend plus shared packages. This is an incremental structural step; the existing React/Vite application remains in place and is not moved or rewritten wholesale.
 
 ## Environment conventions
 
@@ -44,7 +63,8 @@ The approved target architecture is expected to evolve into a multi-package repo
 - Local `.env*` files are ignored by Git, except `.env.example`.
 - Vite variables exposed to client code must use the `VITE_` prefix.
 - Never place provider API keys, database credentials, authentication secrets, or other privileged credentials in `VITE_` variables or client source code.
+- `DATABASE_URL` is backend-only and must never be exposed through `VITE_`.
 
 ## Scope boundary
 
-Phase 0 is repository and engineering preparation only. It does not implement the production backend, PostgreSQL, Meta, AI providers, shipping providers, billing, Tauri, or mobile shells.
+Phase 1 establishes shared contracts, API client/configuration, error handling, logging, request IDs, PostgreSQL/Prisma connection and migrations, storage abstraction, background-job abstraction, and the versioned health endpoint. It does not implement authentication, product business logic, Meta, production AI, shipping integrations, billing, Tauri, or mobile shells.
