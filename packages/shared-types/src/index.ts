@@ -36,6 +36,37 @@ export interface ApiCollection<T> {
   pagination: Pagination;
 }
 
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  slug: string;
+  defaultCountryCode: string;
+  defaultCurrency: string;
+  timezone: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    accessExpiresAt: string;
+    refreshExpiresAt: string;
+  };
+}
+
+export interface AuthMeResponse {
+  user: AuthUser;
+  workspaces: WorkspaceSummary[];
+}
+
 export interface ProductVariant {
   id: string;
   productId: string;
@@ -66,7 +97,7 @@ export interface Product {
   expectedCancellationRate: string;
   expectedReturnRate: string;
   active: boolean;
-  breakEvenPrice: string;
+  breakEvenPrice: string | null;
   expectedNetMargin: string;
   variants?: ProductVariant[];
   createdAt: string;
@@ -87,4 +118,14 @@ export interface ProductInput {
   expectedCancellationRate?: number | string;
   expectedReturnRate?: number | string;
   active?: boolean;
+}
+
+export interface ProductVariantInput {
+  name: string;
+  sku?: string;
+  attributes?: Record<string, unknown>;
+  baseCost?: number | string;
+  salePrice?: number | string;
+  stock?: number;
+  status?: 'ACTIVE' | 'INACTIVE';
 }
