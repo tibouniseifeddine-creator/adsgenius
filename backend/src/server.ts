@@ -7,11 +7,13 @@ import { REQUEST_ID_HEADER } from './shared/request-id.js';
 import { checkDatabase, disconnectDatabase } from './infrastructure/database/client.js';
 import { authenticate, login, logout, me, refresh, register } from './modules/auth.js';
 import { addMember, createWorkspace, getWorkspace, listMembers, listWorkspaces, removeMember, requestBody, updateMember, updateWorkspace } from './modules/workspaces.js';
+import { createProduct, createVariant, deleteProduct, getProduct, listProducts, updateProduct } from './modules/products.js';
 
 function writeJson(response: ServerResponse, status: number, body: unknown, requestId: string): void {
   response.statusCode = status;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.setHeader(REQUEST_ID_HEADER, requestId);
+  if (status === 204) { response.end(); return; }
   response.end(JSON.stringify(body));
 }
 
@@ -88,6 +90,35 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       const memberId = memberMatch[2];
       if (request.method === 'PATCH') writeJson(response, 200, await updateMember(auth, workspaceId, memberId, await requestBody(request), requestId), requestId);
       else if (request.method === 'DELETE') { await removeMember(auth, workspaceId, memberId, requestId); writeJson(response, 204, null, requestId); }
+      else throw new Error('ROUTE_NOT_FOUND');
+      return;
+    }
+
+    const productsCollection = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products$/);
+    if (productsCollection) {
+      const workspaceId = productsCollection[1];
+      if (request.method === 'GET') writeJson(response, 200, { data: await listProducts(auth, workspaceId, url.searchParams.get('search') ?? undefined) }, requestId);
+      else if (request.method === 'POST') writeJson(response, 201, await createProduct(auth, workspaceId, await requestBody(request), requestId), requestId);
+      else throw new Error('ROUTE_NOT_FOUND');
+      return;
+    }
+
+    const productMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products\/([^/]+)$/);
+    if (productMatch) {
+      const workspaceId = productMatch[1];
+      const productId = productMatch[2];
+      if (request.method === 'GET') writeJson(response, 200, await getProduct(auth, workspaceId, productId), requestId);
+      else if (request.method === 'PATCH') writeJson(response, 200, await updateProduct(auth, workspaceId, productId, await requestBody(request), requestId), requestId);
+      else if (request.method === 'DELETE') { await deleteProduct(auth, workspaceId, productId, requestId); writeJson(response, 204, null, requestId); }
+      else throw new Error('ROUTE_NOT_FOUND');
+      return;
+    }
+
+    const variantsMatch = path.match(/^\/api\/v1\/workspaces\/([^/]+)\/products\/([^/]+)\/variants$/);
+    if (variantsMatch) {
+      const workspaceId = variantsMatch[1];
+      const productId = variantsMatch[2];
+      if (request.method === 'POST') writeJson(response, 201, await createVariant(auth, workspaceId, productId, await requestBody(request), requestId), requestId);
       else throw new Error('ROUTE_NOT_FOUND');
       return;
     }
