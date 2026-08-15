@@ -7,20 +7,85 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum WorkspaceRole { OWNER ADMIN MEMBER VIEWER }
-enum MembershipStatus { ACTIVE INVITED SUSPENDED }
-enum ProductVariantStatus { ACTIVE INACTIVE }
-enum CreativeStatus { DRAFT READY ARCHIVED }
-enum CreativeAssetType { IMAGE VIDEO AUDIO OTHER }
-enum AIProvider { MOCK OPENAI ANTHROPIC OTHER }
-enum AITaskStatus { PENDING RUNNING SUCCEEDED FAILED }
-enum AudienceType { BROAD INTERESTS CUSTOM LOOKALIKE RETARGETING }
-enum AudienceStatus { ACTIVE ARCHIVED }
-enum CampaignObjective { SALES LEADS MESSAGES TRAFFIC WEBSITE_CONVERSIONS }
-enum CampaignStatus { DRAFT READY ACTIVE PAUSED ARCHIVED }
-enum CampaignBudgetType { DAILY LIFETIME }
-enum AdSetStatus { DRAFT ACTIVE PAUSED ARCHIVED }
-enum AdStatus { DRAFT ACTIVE PAUSED ARCHIVED }
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+}
+enum CreativeStatus {
+  DRAFT
+  READY
+  ARCHIVED
+}
+enum CreativeAssetType {
+  IMAGE
+  VIDEO
+  AUDIO
+  OTHER
+}
+enum AIProvider {
+  MOCK
+  OPENAI
+  ANTHROPIC
+  OTHER
+}
+enum AITaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+enum AudienceType {
+  BROAD
+  INTERESTS
+  CUSTOM
+  LOOKALIKE
+  RETARGETING
+}
+enum AudienceStatus {
+  ACTIVE
+  ARCHIVED
+}
+enum CampaignObjective {
+  SALES
+  LEADS
+  MESSAGES
+  TRAFFIC
+  WEBSITE_CONVERSIONS
+}
+enum CampaignStatus {
+  DRAFT
+  READY
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+enum CampaignBudgetType {
+  DAILY
+  LIFETIME
+}
+enum AdSetStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+enum AdStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
 
 model InfrastructureState {
   key String @id
