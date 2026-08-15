@@ -4,6 +4,7 @@ import { AppError } from '../shared/errors.js';
 import type { AuthContext } from './auth.js';
 import { requireWorkspaceAccess } from './workspaces.js';
 import { getApprovedMemoryContext } from './memory.js';
+import { assertEntitlement } from './billing.js';
 
 export type AICapability = 'product_analysis' | 'creative_idea' | 'copy_generation' | 'creative_analysis' | 'campaign_diagnosis';
 type AIInput = Record<string, unknown>;
@@ -31,7 +32,7 @@ function validateCapability(value: unknown): AICapability { if (value === 'produ
 async function getOrCreatePrompt(capability: AICapability) { const existing = await prisma.aIPromptVersion.findFirst({ where: { capability, active: true }, orderBy: { createdAt: 'desc' } }); if (existing) return existing; return prisma.aIPromptVersion.create({ data: { capability, version: '1.0.0', template: `AdsGenius ${capability} prompt v1.0.0`, active: true } }); }
 
 export async function runAITask(auth: AuthContext, workspaceId: string, input: AIInput, requestId: string) {
-  await requireWorkspaceAccess(auth, workspaceId); const capability = validateCapability(input.capability); const creativeId = typeof input.creativeId === 'string' ? input.creativeId : undefined;
+  await requireWorkspaceAccess(auth, workspaceId); await assertEntitlement(workspaceId, 'ai.tasks.monthly'); const capability = validateCapability(input.capability); const creativeId = typeof input.creativeId === 'string' ? input.creativeId : undefined;
   if (creativeId) { const creative = await prisma.creative.findFirst({ where: { id: creativeId, workspaceId }, select: { id: true } }); if (!creative) throw new AppError('NOT_FOUND', 'Creative not found.', 404); }
   const prompt = await getOrCreatePrompt(capability); const scopeKey = typeof input.memoryScopeKey === 'string' ? input.memoryScopeKey : undefined; const workspaceMemory = await getApprovedMemoryContext(workspaceId, scopeKey); const enrichedInput: AIInput = { ...input, workspaceMemory };
   const task = await prisma.aITask.create({ data: { workspaceId, userId: auth.userId, creativeId, promptVersionId: prompt.id, capability, provider: 'MOCK', model: 'mock-v1', status: 'RUNNING', inputJson: enrichedInput as Prisma.InputJsonValue, startedAt: new Date() } });
