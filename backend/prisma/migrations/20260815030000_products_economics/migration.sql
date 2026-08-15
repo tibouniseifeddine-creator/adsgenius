@@ -1,4 +1,6 @@
 -- Phase 3: Products + Economics
+CREATE TYPE "ProductVariantStatus" AS ENUM ('ACTIVE', 'INACTIVE');
+
 CREATE TABLE "products" (
   "id" TEXT NOT NULL,
   "workspace_id" TEXT NOT NULL,
@@ -29,7 +31,7 @@ CREATE TABLE "product_variants" (
   "base_cost" DECIMAL(18,2),
   "sale_price" DECIMAL(18,2),
   "stock" INTEGER NOT NULL DEFAULT 0,
-  "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+  "status" "ProductVariantStatus" NOT NULL DEFAULT 'ACTIVE',
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "product_variants_pkey" PRIMARY KEY ("id")
@@ -45,6 +47,3 @@ ALTER TABLE "products" ADD CONSTRAINT "products_workspace_id_fkey"
   FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "product_variants" ADD CONSTRAINT "product_variants_product_id_fkey"
   FOREIGN KEY ("product_id") REFERENCES "products"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
-ALTER TABLE "product_variants" ADD CONSTRAINT "product_variants_status_check"
-  CHECK ("status" IN ('ACTIVE', 'INACTIVE'));
