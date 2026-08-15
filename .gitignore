@@ -1,21 +1,27 @@
 # Dependencies
-node_modules
-.pnp
+node_modules/
+.pnp/
 .pnp.js
 
 # Build outputs
-dist
-build
+dist/
+build/
 *.tsbuildinfo
 
-# Environment variables
+# Environment variables / secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# IDE
-.vscode
-.idea
+# Test / coverage artifacts
+coverage/
+.vitest/
+playwright-report/
+test-results/
+
+# IDE / editor
+.vscode/
+.idea/
 *.swp
 *.swo
 
@@ -29,10 +35,18 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-
-# Testing
-coverage
-
-# Misc
 *.log
-.cache
+
+# Tool caches
+.cache/
+.turbo/
+
+# Generated native application artifacts
+src-tauri/target/
+target/
+android/.gradle/
+android/app/build/
+android/build/
+ios/Pods/
+ios/build/
+DerivedData/
