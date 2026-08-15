@@ -5,309 +5,42 @@ import type { AuthContext } from './auth.js';
 import { requireWorkspaceAccess } from './workspaces.js';
 import { runAITask } from './ai.js';
 
-type MetricInput = number | string | null | undefined;
+type MetricInput = unknown;
 export type MetricProvenance = 'REPORTED' | 'CALCULATED' | 'ESTIMATED';
-
-export interface NormalizedKpis {
-  cpm: number | null;
-  ctr: number | null;
-  cpc: number | null;
-  conversionRate: number | null;
-  cpa: number | null;
-  roas: number | null;
-}
-
-export interface DiagnosisCause {
-  cause: string;
-  confidence: number;
-  evidence: string[];
-}
-
-export interface DiagnosisRecommendation {
-  type: string;
-  title: string;
-  action: string;
-  objective: string;
-  risk: string;
-}
-
-function nonNegative(value: MetricInput, field: string): number | null {
-  if (value === undefined || value === null || value === '') return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) throw new AppError('VALIDATION_ERROR', `${field} must be a non-negative number.`, 400);
-  return parsed;
-}
-
-function integer(value: MetricInput, field: string): number | null {
-  const parsed = nonNegative(value, field);
-  if (parsed === null) return null;
-  if (!Number.isInteger(parsed)) throw new AppError('VALIDATION_ERROR', `${field} must be an integer.`, 400);
-  return parsed;
-}
-
-function date(value: unknown, field: string): Date {
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) throw new AppError('VALIDATION_ERROR', `${field} must be a valid date.`, 400);
-  return parsed;
-}
-
-function currency(value: unknown): string {
-  const result = typeof value === 'string' ? value.trim().toUpperCase() : 'DZD';
-  if (!/^[A-Z]{3}$/.test(result)) throw new AppError('VALIDATION_ERROR', 'Currency must be a 3-letter ISO-style code.', 400);
-  return result;
-}
-
-function provenance(value: unknown): Record<string, MetricProvenance> {
-  if (value === undefined || value === null) return {};
-  if (typeof value !== 'object' || Array.isArray(value)) throw new AppError('VALIDATION_ERROR', 'metricProvenance must be an object.', 400);
-  const result: Record<string, MetricProvenance> = {};
-  for (const [key, source] of Object.entries(value as Record<string, unknown>)) {
-    if (source !== 'REPORTED' && source !== 'CALCULATED' && source !== 'ESTIMATED') throw new AppError('VALIDATION_ERROR', `Invalid metric provenance for ${key}.`, 400);
-    result[key] = source;
-  }
-  return result;
-}
-
-function ratioChange(current: number | null, baseline: number | null): number | null {
-  if (current === null || baseline === null || baseline === 0) return null;
-  return (current - baseline) / Math.abs(baseline);
-}
-
+export interface NormalizedKpis { cpm: number | null; ctr: number | null; cpc: number | null; conversionRate: number | null; cpa: number | null; roas: number | null; }
+export interface DiagnosisCause { cause: string; confidence: number; evidence: string[]; }
+export interface DiagnosisRecommendation { type: string; title: string; action: string; objective: string; risk: string; }
+function nonNegative(value: MetricInput, field: string): number | null { if (value === undefined || value === null || value === '') return null; const parsed = Number(value); if (!Number.isFinite(parsed) || parsed < 0) throw new AppError('VALIDATION_ERROR', `${field} must be a non-negative number.`, 400); return parsed; }
+function integer(value: MetricInput, field: string): number | null { const parsed = nonNegative(value, field); if (parsed === null) return null; if (!Number.isInteger(parsed)) throw new AppError('VALIDATION_ERROR', `${field} must be an integer.`, 400); return parsed; }
+function date(value: unknown, field: string): Date { const parsed = new Date(String(value)); if (Number.isNaN(parsed.getTime())) throw new AppError('VALIDATION_ERROR', `${field} must be a valid date.`, 400); return parsed; }
+function currency(value: unknown): string { const result = typeof value === 'string' ? value.trim().toUpperCase() : 'DZD'; if (!/^[A-Z]{3}$/.test(result)) throw new AppError('VALIDATION_ERROR', 'Currency must be a 3-letter ISO-style code.', 400); return result; }
+function provenance(value: unknown): Record<string, MetricProvenance> { if (value === undefined || value === null) return {}; if (typeof value !== 'object' || Array.isArray(value)) throw new AppError('VALIDATION_ERROR', 'metricProvenance must be an object.', 400); const result: Record<string, MetricProvenance> = {}; for (const [key, source] of Object.entries(value as Record<string, unknown>)) { if (source !== 'REPORTED' && source !== 'CALCULATED' && source !== 'ESTIMATED') throw new AppError('VALIDATION_ERROR', `Invalid metric provenance for ${key}.`, 400); result[key] = source; } return result; }
+function ratioChange(current: number | null, baseline: number | null): number | null { if (current === null || baseline === null || baseline === 0) return null; return (current - baseline) / Math.abs(baseline); }
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
-
-export function calculateKpis(metrics: { impressions?: number | null; clicks?: number | null; spend?: number | null; conversions?: number | null; revenue?: number | null }): NormalizedKpis {
-  const impressions = metrics.impressions ?? null;
-  const clicks = metrics.clicks ?? null;
-  const spend = metrics.spend ?? null;
-  const conversions = metrics.conversions ?? null;
-  const revenue = metrics.revenue ?? null;
-  return {
-    cpm: impressions && spend !== null ? (spend / impressions) * 1000 : null,
-    ctr: impressions && clicks !== null ? (clicks / impressions) * 100 : null,
-    cpc: clicks && spend !== null ? spend / clicks : null,
-    conversionRate: clicks && conversions !== null ? (conversions / clicks) * 100 : null,
-    cpa: conversions && spend !== null ? spend / conversions : null,
-    roas: spend && revenue !== null ? revenue / spend : null,
-  };
-}
-
-function decimal(value: number | null | undefined): Prisma.Decimal | undefined {
-  return value === null || value === undefined ? undefined : new Prisma.Decimal(value);
-}
-
-function serializeSnapshot(snapshot: any) {
-  return {
-    ...snapshot,
-    spend: snapshot.spend?.toString() ?? null,
-    conversions: snapshot.conversions?.toString() ?? null,
-    revenue: snapshot.revenue?.toString() ?? null,
-  };
-}
-
-function snapshotMetrics(snapshot: any) {
-  const metrics = {
-    impressions: snapshot.impressions ?? null,
-    clicks: snapshot.clicks ?? null,
-    spend: snapshot.spend === null || snapshot.spend === undefined ? null : Number(snapshot.spend),
-    conversions: snapshot.conversions === null || snapshot.conversions === undefined ? null : Number(snapshot.conversions),
-    revenue: snapshot.revenue === null || snapshot.revenue === undefined ? null : Number(snapshot.revenue),
-  };
-  return { ...metrics, ...calculateKpis(metrics) };
-}
-
-async function writable(auth: AuthContext, workspaceId: string) {
-  const access = await requireWorkspaceAccess(auth, workspaceId);
-  if (!['OWNER', 'ADMIN', 'MEMBER'].includes(access.role)) throw new AppError('FORBIDDEN', 'You do not have permission to write analytics.', 403);
-}
+export function calculateKpis(metrics: { impressions?: number | null; clicks?: number | null; spend?: number | null; conversions?: number | null; revenue?: number | null }): NormalizedKpis { const impressions = metrics.impressions ?? null; const clicks = metrics.clicks ?? null; const spend = metrics.spend ?? null; const conversions = metrics.conversions ?? null; const revenue = metrics.revenue ?? null; return { cpm: impressions && spend !== null ? (spend / impressions) * 1000 : null, ctr: impressions && clicks !== null ? (clicks / impressions) * 100 : null, cpc: clicks && spend !== null ? spend / clicks : null, conversionRate: clicks && conversions !== null ? (conversions / clicks) * 100 : null, cpa: conversions && spend !== null ? spend / conversions : null, roas: spend && revenue !== null ? revenue / spend : null }; }
+function decimal(value: number | null | undefined): Prisma.Decimal | undefined { return value === null || value === undefined ? undefined : new Prisma.Decimal(value); }
+function serializeSnapshot(snapshot: any) { return { ...snapshot, spend: snapshot.spend?.toString() ?? null, conversions: snapshot.conversions?.toString() ?? null, revenue: snapshot.revenue?.toString() ?? null }; }
+function snapshotMetrics(snapshot: any) { const metrics = { impressions: snapshot.impressions ?? null, clicks: snapshot.clicks ?? null, spend: snapshot.spend === null || snapshot.spend === undefined ? null : Number(snapshot.spend), conversions: snapshot.conversions === null || snapshot.conversions === undefined ? null : Number(snapshot.conversions), revenue: snapshot.revenue === null || snapshot.revenue === undefined ? null : Number(snapshot.revenue) }; return { ...metrics, ...calculateKpis(metrics) }; }
+async function writable(auth: AuthContext, workspaceId: string) { const access = await requireWorkspaceAccess(auth, workspaceId); if (!['OWNER', 'ADMIN', 'MEMBER'].includes(access.role)) throw new AppError('FORBIDDEN', 'You do not have permission to write analytics.', 403); }
 
 export async function ingestPerformanceSnapshot(auth: AuthContext, workspaceId: string, input: Record<string, unknown>, requestId: string) {
-  await writable(auth, workspaceId);
-  const entityType = typeof input.entityType === 'string' ? input.entityType.trim().toUpperCase() : '';
-  const entityId = typeof input.entityId === 'string' ? input.entityId.trim() : '';
-  const provider = typeof input.provider === 'string' ? input.provider.trim().toUpperCase() : '';
-  if (!entityType || !entityId || !provider) throw new AppError('VALIDATION_ERROR', 'entityType, entityId and provider are required.', 400);
-  const periodStart = date(input.periodStart, 'periodStart');
-  const periodEnd = date(input.periodEnd, 'periodEnd');
-  if (periodEnd <= periodStart) throw new AppError('VALIDATION_ERROR', 'periodEnd must be after periodStart.', 400);
-  const campaignId = typeof input.campaignId === 'string' ? input.campaignId : undefined;
-  const creativeVersionId = typeof input.creativeVersionId === 'string' ? input.creativeVersionId : undefined;
-  if (campaignId) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true } });
-    if (!campaign) throw new AppError('VALIDATION_ERROR', 'Campaign does not belong to this workspace.', 400);
-  }
-  if (creativeVersionId) {
-    const version = await prisma.creativeVersion.findFirst({ where: { id: creativeVersionId, creative: { workspaceId } }, select: { id: true } });
-    if (!version) throw new AppError('VALIDATION_ERROR', 'Creative version does not belong to this workspace.', 400);
-  }
-  const metrics = {
-    impressions: integer(input.impressions, 'impressions'),
-    clicks: integer(input.clicks, 'clicks'),
-    reach: integer(input.reach, 'reach'),
-    spend: nonNegative(input.spend, 'spend'),
-    conversions: nonNegative(input.conversions, 'conversions'),
-    revenue: nonNegative(input.revenue, 'revenue'),
-  };
-  const kpis = calculateKpis(metrics);
-  const metricProvenance = provenance(input.metricProvenance);
-  const data = {
-    workspaceId,
-    campaignId,
-    creativeVersionId,
-    entityType,
-    entityId,
-    provider,
-    periodStart,
-    periodEnd,
-    ...metrics,
-    currency: currency(input.currency),
-    metricProvenance: metricProvenance as Prisma.InputJsonValue,
-    normalizedMetrics: kpis as Prisma.InputJsonValue,
-    sourceTimestamp: input.sourceTimestamp ? date(input.sourceTimestamp, 'sourceTimestamp') : undefined,
-  };
-  const existing = await prisma.performanceSnapshot.findFirst({ where: { workspaceId, entityType, entityId, provider, periodStart, periodEnd } });
-  const snapshot = existing
-    ? await prisma.performanceSnapshot.update({ where: { id: existing.id }, data })
-    : await prisma.performanceSnapshot.create({ data: { id: undefined, ...data } });
-  await prisma.auditLog.create({ data: { workspaceId, userId: auth.userId, action: existing ? 'analytics.snapshot.update' : 'analytics.snapshot.ingest', entityType: 'PerformanceSnapshot', entityId: snapshot.id, afterJson: { campaignId, entityType, entityId, provider, periodStart, periodEnd }, requestReference: requestId } });
-  if (campaignId && !existing) await detectAndPersistAnomalies(workspaceId, campaignId, snapshot);
-  return { ...serializeSnapshot(snapshot), kpis };
+  await writable(auth, workspaceId); const entityType = typeof input.entityType === 'string' ? input.entityType.trim().toUpperCase() : ''; const entityId = typeof input.entityId === 'string' ? input.entityId.trim() : ''; const provider = typeof input.provider === 'string' ? input.provider.trim().toUpperCase() : ''; if (!entityType || !entityId || !provider) throw new AppError('VALIDATION_ERROR', 'entityType, entityId and provider are required.', 400);
+  const periodStart = date(input.periodStart, 'periodStart'); const periodEnd = date(input.periodEnd, 'periodEnd'); if (periodEnd <= periodStart) throw new AppError('VALIDATION_ERROR', 'periodEnd must be after periodStart.', 400);
+  const campaignId = typeof input.campaignId === 'string' ? input.campaignId : undefined; const creativeVersionId = typeof input.creativeVersionId === 'string' ? input.creativeVersionId : undefined;
+  if (campaignId) { const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true } }); if (!campaign) throw new AppError('VALIDATION_ERROR', 'Campaign does not belong to this workspace.', 400); }
+  if (creativeVersionId) { const version = await prisma.creativeVersion.findFirst({ where: { id: creativeVersionId, creative: { workspaceId } }, select: { id: true } }); if (!version) throw new AppError('VALIDATION_ERROR', 'Creative version does not belong to this workspace.', 400); }
+  const metrics = { impressions: integer(input.impressions, 'impressions'), clicks: integer(input.clicks, 'clicks'), reach: integer(input.reach, 'reach'), spend: nonNegative(input.spend, 'spend'), conversions: nonNegative(input.conversions, 'conversions'), revenue: nonNegative(input.revenue, 'revenue') };
+  const kpis = calculateKpis(metrics); const metricProvenance = provenance(input.metricProvenance); const data = { workspaceId, campaignId, creativeVersionId, entityType, entityId, provider, periodStart, periodEnd, ...metrics, currency: currency(input.currency), metricProvenance: metricProvenance as Prisma.InputJsonValue, normalizedMetrics: kpis as unknown as Prisma.InputJsonValue, sourceTimestamp: input.sourceTimestamp ? date(input.sourceTimestamp, 'sourceTimestamp') : undefined };
+  const existing = await prisma.performanceSnapshot.findFirst({ where: { workspaceId, entityType, entityId, provider, periodStart, periodEnd } }); const snapshot = existing ? await prisma.performanceSnapshot.update({ where: { id: existing.id }, data }) : await prisma.performanceSnapshot.create({ data: { ...data } });
+  await prisma.auditLog.create({ data: { workspaceId, userId: auth.userId, action: existing ? 'analytics.snapshot.update' : 'analytics.snapshot.ingest', entityType: 'PerformanceSnapshot', entityId: snapshot.id, afterJson: { campaignId, entityType, entityId, provider, periodStart, periodEnd }, requestReference: requestId } }); if (campaignId && !existing) await detectAndPersistAnomalies(workspaceId, campaignId, snapshot); return { ...serializeSnapshot(snapshot), kpis };
 }
+async function detectAndPersistAnomalies(workspaceId: string, campaignId: string, current: any) { const previous = await prisma.performanceSnapshot.findFirst({ where: { workspaceId, campaignId, id: { not: current.id }, periodEnd: { lt: current.periodEnd } }, orderBy: { periodEnd: 'desc' } }); if (!previous) return []; const currentMetrics = snapshotMetrics(current); const previousMetrics = snapshotMetrics(previous); const checks: Array<{ metric: keyof NormalizedKpis; badDirection: 'up' | 'down'; label: string }> = [{ metric: 'ctr', badDirection: 'down', label: 'CTR' }, { metric: 'cpc', badDirection: 'up', label: 'CPC' }, { metric: 'cpm', badDirection: 'up', label: 'CPM' }, { metric: 'conversionRate', badDirection: 'down', label: 'conversion rate' }, { metric: 'roas', badDirection: 'down', label: 'ROAS' }]; const anomalies = []; for (const check of checks) { const currentValue = currentMetrics[check.metric]; const baselineValue = previousMetrics[check.metric]; const change = ratioChange(currentValue, baselineValue); if (change === null) continue; const bad = check.badDirection === 'down' ? change <= -0.2 : change >= 0.25; if (!bad) continue; const magnitude = Math.abs(change); const severity = magnitude >= 0.4 ? 'HIGH' : 'MEDIUM'; anomalies.push(await prisma.analyticsAnomaly.create({ data: { workspaceId, campaignId, snapshotId: current.id, metric: check.label, direction: change < 0 ? 'DOWN' : 'UP', severity, score: clamp01(magnitude), baselineValue: decimal(baselineValue), currentValue: decimal(currentValue), changeRatio: decimal(change), evidence: { previousSnapshotId: previous.id, periodStart: current.periodStart, periodEnd: current.periodEnd } } })); } return anomalies; }
 
-async function detectAndPersistAnomalies(workspaceId: string, campaignId: string, current: any) {
-  const previous = await prisma.performanceSnapshot.findFirst({ where: { workspaceId, campaignId, id: { not: current.id }, periodEnd: { lt: current.periodEnd } }, orderBy: { periodEnd: 'desc' } });
-  if (!previous) return [];
-  const currentMetrics = snapshotMetrics(current);
-  const previousMetrics = snapshotMetrics(previous);
-  const checks: Array<{ metric: keyof NormalizedKpis; badDirection: 'up' | 'down'; label: string }> = [
-    { metric: 'ctr', badDirection: 'down', label: 'CTR' },
-    { metric: 'cpc', badDirection: 'up', label: 'CPC' },
-    { metric: 'cpm', badDirection: 'up', label: 'CPM' },
-    { metric: 'conversionRate', badDirection: 'down', label: 'conversion rate' },
-    { metric: 'roas', badDirection: 'down', label: 'ROAS' },
-  ];
-  const anomalies = [];
-  for (const check of checks) {
-    const currentValue = currentMetrics[check.metric];
-    const baselineValue = previousMetrics[check.metric];
-    const change = ratioChange(currentValue, baselineValue);
-    if (change === null) continue;
-    const bad = check.badDirection === 'down' ? change <= -0.2 : change >= 0.25;
-    if (!bad) continue;
-    const magnitude = Math.abs(change);
-    const severity = magnitude >= 0.4 ? 'HIGH' : 'MEDIUM';
-    const anomaly = await prisma.analyticsAnomaly.create({ data: { workspaceId, campaignId, snapshotId: current.id, metric: check.label, direction: change < 0 ? 'DOWN' : 'UP', severity, score: clamp01(magnitude), baselineValue: decimal(baselineValue), currentValue: decimal(currentValue), changeRatio: decimal(change), evidence: { previousSnapshotId: previous.id, periodStart: current.periodStart, periodEnd: current.periodEnd } } });
-    anomalies.push(anomaly);
-  }
-  return anomalies;
-}
+export async function getCampaignAnalytics(auth: AuthContext, workspaceId: string, campaignId: string, start?: string, end?: string) { await requireWorkspaceAccess(auth, workspaceId); const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true, name: true, currency: true } }); if (!campaign) throw new AppError('NOT_FOUND', 'Campaign not found.', 404); const periodEnd = end ? date(end, 'end') : new Date(); const periodStart = start ? date(start, 'start') : new Date(periodEnd.getTime() - 30 * 24 * 60 * 60 * 1000); if (periodEnd <= periodStart) throw new AppError('VALIDATION_ERROR', 'end must be after start.', 400); const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, campaignId, periodStart: { gte: periodStart }, periodEnd: { lte: periodEnd } }, orderBy: { periodEnd: 'asc' } }); const totals = snapshots.reduce((acc, snapshot) => { const metrics = snapshotMetrics(snapshot); acc.impressions += metrics.impressions ?? 0; acc.clicks += metrics.clicks ?? 0; acc.spend += metrics.spend ?? 0; acc.conversions += metrics.conversions ?? 0; acc.revenue += metrics.revenue ?? 0; return acc; }, { impressions: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0 }); return { campaign, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, totals, kpis: calculateKpis(totals), snapshots: snapshots.map((snapshot) => ({ ...serializeSnapshot(snapshot), kpis: snapshotMetrics(snapshot) })) }; }
 
-export async function getCampaignAnalytics(auth: AuthContext, workspaceId: string, campaignId: string, start?: string, end?: string) {
-  await requireWorkspaceAccess(auth, workspaceId);
-  const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true, name: true, currency: true } });
-  if (!campaign) throw new AppError('NOT_FOUND', 'Campaign not found.', 404);
-  const periodEnd = end ? date(end, 'end') : new Date();
-  const periodStart = start ? date(start, 'start') : new Date(periodEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
-  if (periodEnd <= periodStart) throw new AppError('VALIDATION_ERROR', 'end must be after start.', 400);
-  const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, campaignId, periodStart: { gte: periodStart }, periodEnd: { lte: periodEnd } }, orderBy: { periodEnd: 'asc' } });
-  const totals = snapshots.reduce((acc, snapshot) => {
-    const metrics = snapshotMetrics(snapshot);
-    acc.impressions += metrics.impressions ?? 0;
-    acc.clicks += metrics.clicks ?? 0;
-    acc.spend += metrics.spend ?? 0;
-    acc.conversions += metrics.conversions ?? 0;
-    acc.revenue += metrics.revenue ?? 0;
-    return acc;
-  }, { impressions: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0 });
-  return { campaign, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, totals, kpis: calculateKpis(totals), snapshots: snapshots.map((snapshot) => ({ ...serializeSnapshot(snapshot), kpis: snapshotMetrics(snapshot) })) };
-}
+function buildDiagnosis(previous: any, current: any) { const previousMetrics = snapshotMetrics(previous); const currentMetrics = snapshotMetrics(current); const observedFacts: Array<Record<string, unknown>> = []; const causes: DiagnosisCause[] = []; const recommendations: DiagnosisRecommendation[] = []; const checks: Array<{ metric: keyof NormalizedKpis; label: string; badDirection: 'up' | 'down'; threshold: number; cause: string; evidence: string; recommendation: DiagnosisRecommendation }> = [{ metric: 'ctr', label: 'CTR', badDirection: 'down', threshold: -0.2, cause: 'creative_or_audience_fatigue', evidence: 'CTR declined materially versus the previous period.', recommendation: { type: 'creative_review', title: 'Review creative fatigue', action: 'Compare active creative variants and test a fresh angle or hook.', objective: 'Recover click-through rate', risk: 'A new creative may reduce performance before sufficient learning data is available.' } }, { metric: 'cpc', label: 'CPC', badDirection: 'up', threshold: 0.25, cause: 'auction_or_engagement_pressure', evidence: 'CPC increased materially versus the previous period.', recommendation: { type: 'auction_review', title: 'Review CPC pressure', action: 'Review audience breadth, placement mix and creative engagement before changing budget.', objective: 'Control acquisition cost', risk: 'Narrowing an audience can reduce delivery volume.' } }, { metric: 'cpm', label: 'CPM', badDirection: 'up', threshold: 0.25, cause: 'auction_or_audience_pressure', evidence: 'CPM increased materially versus the previous period.', recommendation: { type: 'audience_review', title: 'Review audience and placement pressure', action: 'Compare audience and placement performance before making targeting changes.', objective: 'Reduce inefficient impressions', risk: 'Targeting changes can alter learning and delivery.' } }, { metric: 'conversionRate', label: 'conversion rate', badDirection: 'down', threshold: -0.2, cause: 'post_click_conversion_pressure', evidence: 'Conversion rate declined materially versus the previous period.', recommendation: { type: 'landing_page_review', title: 'Review post-click conversion', action: 'Check landing page, offer, checkout and tracking signals before changing campaign structure.', objective: 'Recover conversion efficiency', risk: 'The available data may not isolate the exact post-click cause.' } }, { metric: 'roas', label: 'ROAS', badDirection: 'down', threshold: -0.2, cause: 'overall_efficiency_decline', evidence: 'ROAS declined materially versus the previous period.', recommendation: { type: 'efficiency_review', title: 'Review overall efficiency', action: 'Use the supporting KPI changes to prioritize the next controlled test.', objective: 'Restore efficient return', risk: 'ROAS is an outcome metric and does not prove a single root cause.' } }]; for (const check of checks) { const currentValue = currentMetrics[check.metric]; const baselineValue = previousMetrics[check.metric]; const change = ratioChange(currentValue, baselineValue); if (change === null) continue; observedFacts.push({ metric: check.label, previous: baselineValue, current: currentValue, changeRatio: change }); const bad = check.badDirection === 'down' ? change <= check.threshold : change >= check.threshold; if (bad) { const confidence = clamp01(Math.min(0.9, 0.45 + Math.abs(change))); const existing = causes.find((cause) => cause.cause === check.cause); if (existing) existing.confidence = Math.max(existing.confidence, confidence); else causes.push({ cause: check.cause, confidence, evidence: [check.evidence] }); if (!recommendations.some((item) => item.type === check.recommendation.type)) recommendations.push(check.recommendation); } } const confidence = causes.length ? clamp01(causes.reduce((sum, cause) => sum + cause.confidence, 0) / causes.length) : 0; return { observedFacts, causes, recommendations, confidence }; }
 
-function buildDiagnosis(previous: any, current: any) {
-  const previousMetrics = snapshotMetrics(previous);
-  const currentMetrics = snapshotMetrics(current);
-  const observedFacts: Array<Record<string, unknown>> = [];
-  const causes: DiagnosisCause[] = [];
-  const recommendations: DiagnosisRecommendation[] = [];
-  const checks: Array<{ metric: keyof NormalizedKpis; label: string; badDirection: 'up' | 'down'; threshold: number; cause: string; evidence: string; recommendation: DiagnosisRecommendation }> = [
-    { metric: 'ctr', label: 'CTR', badDirection: 'down', threshold: -0.2, cause: 'creative_or_audience_fatigue', evidence: 'CTR declined materially versus the previous period.', recommendation: { type: 'creative_review', title: 'Review creative fatigue', action: 'Compare active creative variants and test a fresh angle or hook.', objective: 'Recover click-through rate', risk: 'A new creative may reduce performance before sufficient learning data is available.' } },
-    { metric: 'cpc', label: 'CPC', badDirection: 'up', threshold: 0.25, cause: 'auction_or_engagement_pressure', evidence: 'CPC increased materially versus the previous period.', recommendation: { type: 'auction_review', title: 'Review CPC pressure', action: 'Review audience breadth, placement mix and creative engagement before changing budget.', objective: 'Control acquisition cost', risk: 'Narrowing an audience can reduce delivery volume.' } },
-    { metric: 'cpm', label: 'CPM', badDirection: 'up', threshold: 0.25, cause: 'auction_or_audience_pressure', evidence: 'CPM increased materially versus the previous period.', recommendation: { type: 'audience_review', title: 'Review audience and placement pressure', action: 'Compare audience and placement performance before making targeting changes.', objective: 'Reduce inefficient impressions', risk: 'Targeting changes can alter learning and delivery.' } },
-    { metric: 'conversionRate', label: 'conversion rate', badDirection: 'down', threshold: -0.2, cause: 'post_click_conversion_pressure', evidence: 'Conversion rate declined materially versus the previous period.', recommendation: { type: 'landing_page_review', title: 'Review post-click conversion', action: 'Check landing page, offer, checkout and tracking signals before changing campaign structure.', objective: 'Recover conversion efficiency', risk: 'The available data may not isolate the exact post-click cause.' } },
-    { metric: 'roas', label: 'ROAS', badDirection: 'down', threshold: -0.2, cause: 'overall_efficiency_decline', evidence: 'ROAS declined materially versus the previous period.', recommendation: { type: 'efficiency_review', title: 'Review overall efficiency', action: 'Use the supporting KPI changes to prioritize the next controlled test.', objective: 'Restore efficient return', risk: 'ROAS is an outcome metric and does not prove a single root cause.' } },
-  ];
-  for (const check of checks) {
-    const currentValue = currentMetrics[check.metric];
-    const baselineValue = previousMetrics[check.metric];
-    const change = ratioChange(currentValue, baselineValue);
-    if (change === null) continue;
-    observedFacts.push({ metric: check.label, previous: baselineValue, current: currentValue, changeRatio: change });
-    const bad = check.badDirection === 'down' ? change <= check.threshold : change >= check.threshold;
-    if (bad) {
-      const confidence = clamp01(Math.min(0.9, 0.45 + Math.abs(change)));
-      const existing = causes.find((cause) => cause.cause === check.cause);
-      if (existing) existing.confidence = Math.max(existing.confidence, confidence);
-      else causes.push({ cause: check.cause, confidence, evidence: [check.evidence] });
-      if (!recommendations.some((item) => item.type === check.recommendation.type)) recommendations.push(check.recommendation);
-    }
-  }
-  const confidence = causes.length ? clamp01(causes.reduce((sum, cause) => sum + cause.confidence, 0) / causes.length) : 0;
-  return { observedFacts, causes, recommendations, confidence };
-}
-
-export async function diagnoseCampaign(auth: AuthContext, workspaceId: string, campaignId: string, input: Record<string, unknown>, requestId: string) {
-  await requireWorkspaceAccess(auth, workspaceId);
-  const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true } });
-  if (!campaign) throw new AppError('NOT_FOUND', 'Campaign not found.', 404);
-  const periodEnd = input.end ? date(input.end, 'end') : new Date();
-  const periodStart = input.start ? date(input.start, 'start') : new Date(periodEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, campaignId, periodStart: { gte: periodStart }, periodEnd: { lte: periodEnd } }, orderBy: { periodEnd: 'desc' }, take: 20 });
-  const current = snapshots[0];
-  const previous = snapshots[1];
-  if (!current || !previous) {
-    const diagnosis = await prisma.performanceDiagnosis.create({ data: { workspaceId, campaignId, periodStart, periodEnd, status: 'INSUFFICIENT_DATA', confidence: 0, observedFacts: [], candidateCauses: [], evidenceSnapshotIds: snapshots.map((snapshot) => snapshot.id), aiSummary: 'Insufficient snapshots to establish a traceable period-over-period diagnosis.' } });
-    return { id: diagnosis.id, status: diagnosis.status, confidence: 0, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, observedFacts: [], candidateCauses: [], recommendations: [], aiSummary: diagnosis.aiSummary, evidenceSnapshotIds: snapshots.map((snapshot) => snapshot.id) };
-  }
-  const result = buildDiagnosis(previous, current);
-  const diagnosis = await prisma.performanceDiagnosis.create({ data: { workspaceId, campaignId, periodStart, periodEnd, status: 'COMPLETE', confidence: result.confidence, observedFacts: result.observedFacts as Prisma.InputJsonValue, candidateCauses: result.causes as Prisma.InputJsonValue, evidenceSnapshotIds: [previous.id, current.id] as Prisma.InputJsonValue } });
-  await prisma.$transaction(result.recommendations.map((recommendation) => prisma.analyticsRecommendation.create({ data: { workspaceId, campaignId, diagnosisId: diagnosis.id, ...recommendation } })));
-  let aiSummary: string | null = null;
-  let aiTaskId: string | null = null;
-  try {
-    const ai = await runAITask(auth, workspaceId, { capability: 'campaign_diagnosis', campaignId, confidence: result.confidence, candidateCauses: result.causes, recommendations: result.recommendations, evidenceSnapshotIds: [previous.id, current.id] }, requestId);
-    aiTaskId = ai.id;
-    const output = ai.output as { summary?: string };
-    aiSummary = typeof output.summary === 'string' ? output.summary : null;
-    await prisma.performanceDiagnosis.update({ where: { id: diagnosis.id }, data: { aiTaskId, aiSummary } });
-  } catch {
-    aiSummary = null;
-  }
-  return { id: diagnosis.id, status: diagnosis.status, confidence: result.confidence, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, observedFacts: result.observedFacts, candidateCauses: result.causes, recommendations: result.recommendations, aiTaskId, aiSummary, evidenceSnapshotIds: [previous.id, current.id] };
-}
-
-export async function listDiagnostics(auth: AuthContext, workspaceId: string, campaignId?: string) {
-  await requireWorkspaceAccess(auth, workspaceId);
-  const diagnoses = await prisma.performanceDiagnosis.findMany({ where: { workspaceId, ...(campaignId ? { campaignId } : {}) }, include: { recommendations: true }, orderBy: { createdAt: 'desc' }, take: 50 });
-  return diagnoses.map((diagnosis) => ({ ...diagnosis, confidence: diagnosis.confidence.toString(), recommendations: diagnosis.recommendations.map((recommendation) => ({ ...recommendation })) }));
-}
-
-export async function listCreativeFatigue(auth: AuthContext, workspaceId: string) {
-  await requireWorkspaceAccess(auth, workspaceId);
-  const signals = await prisma.creativeFatigueSignal.findMany({ where: { workspaceId }, include: { creativeVersion: { include: { creative: true } } }, orderBy: { createdAt: 'desc' }, take: 50 });
-  return signals.map((signal) => ({ ...signal, score: signal.score.toString(), confidence: signal.confidence.toString() }));
-}
-
-export async function detectCreativeFatigue(auth: AuthContext, workspaceId: string, creativeVersionId: string, requestId: string) {
-  await writable(auth, workspaceId);
-  const version = await prisma.creativeVersion.findFirst({ where: { id: creativeVersionId, creative: { workspaceId } }, select: { id: true } });
-  if (!version) throw new AppError('NOT_FOUND', 'Creative version not found.', 404);
-  const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, creativeVersionId }, orderBy: { periodEnd: 'desc' }, take: 2 });
-  if (snapshots.length < 2) throw new AppError('VALIDATION_ERROR', 'At least two performance snapshots are required to detect fatigue.', 400);
-  const current = snapshotMetrics(snapshots[0]);
-  const previous = snapshotMetrics(snapshots[1]);
-  const ctrChange = ratioChange(current.ctr, previous.ctr);
-  const cpcChange = ratioChange(current.cpc, previous.cpc);
-  const score = clamp01(Math.max(ctrChange !== null && ctrChange < 0 ? -ctrChange : 0, cpcChange !== null && cpcChange > 0 ? cpcChange : 0));
-  const confidence = clamp01(0.4 + score);
-  const signal = await prisma.creativeFatigueSignal.create({ data: { workspaceId, creativeVersionId, periodStart: snapshots[1].periodStart, periodEnd: snapshots[0].periodEnd, score: new Prisma.Decimal(score), confidence: new Prisma.Decimal(confidence), evidence: { ctrChange, cpcChange, previousSnapshotId: snapshots[1].id, currentSnapshotId: snapshots[0].id } } });
-  await prisma.auditLog.create({ data: { workspaceId, userId: auth.userId, action: 'analytics.creative_fatigue.detect', entityType: 'CreativeFatigueSignal', entityId: signal.id, afterJson: { creativeVersionId, score, confidence }, requestReference: requestId } });
-  return { ...signal, score: signal.score.toString(), confidence: signal.confidence.toString() };
-}
+export async function diagnoseCampaign(auth: AuthContext, workspaceId: string, campaignId: string, input: Record<string, unknown>, requestId: string) { await requireWorkspaceAccess(auth, workspaceId); const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId }, select: { id: true } }); if (!campaign) throw new AppError('NOT_FOUND', 'Campaign not found.', 404); const periodEnd = input.end ? date(input.end, 'end') : new Date(); const periodStart = input.start ? date(input.start, 'start') : new Date(periodEnd.getTime() - 30 * 24 * 60 * 60 * 1000); const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, campaignId, periodStart: { gte: periodStart }, periodEnd: { lte: periodEnd } }, orderBy: { periodEnd: 'desc' }, take: 20 }); const current = snapshots[0]; const previous = snapshots[1]; if (!current || !previous) { const diagnosis = await prisma.performanceDiagnosis.create({ data: { workspaceId, campaignId, periodStart, periodEnd, status: 'INSUFFICIENT_DATA', confidence: 0, observedFacts: [], candidateCauses: [], evidenceSnapshotIds: snapshots.map((snapshot) => snapshot.id), aiSummary: 'Insufficient snapshots to establish a traceable period-over-period diagnosis.' } }); return { id: diagnosis.id, status: diagnosis.status, confidence: 0, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, observedFacts: [], candidateCauses: [], recommendations: [], aiSummary: diagnosis.aiSummary, evidenceSnapshotIds: snapshots.map((snapshot) => snapshot.id) }; } const result = buildDiagnosis(previous, current); const diagnosis = await prisma.performanceDiagnosis.create({ data: { workspaceId, campaignId, periodStart, periodEnd, status: 'COMPLETE', confidence: result.confidence, observedFacts: result.observedFacts as unknown as Prisma.InputJsonValue, candidateCauses: result.causes as unknown as Prisma.InputJsonValue, evidenceSnapshotIds: [previous.id, current.id] as Prisma.InputJsonValue } }); await prisma.$transaction(result.recommendations.map((recommendation) => prisma.analyticsRecommendation.create({ data: { workspaceId, campaignId, diagnosisId: diagnosis.id, ...recommendation } }))); let aiSummary: string | null = null; let aiTaskId: string | null = null; try { const ai = await runAITask(auth, workspaceId, { capability: 'campaign_diagnosis', campaignId, confidence: result.confidence, candidateCauses: result.causes, recommendations: result.recommendations, evidenceSnapshotIds: [previous.id, current.id] }, requestId); aiTaskId = ai.id; const output = ai.output as { summary?: string }; aiSummary = typeof output.summary === 'string' ? output.summary : null; await prisma.performanceDiagnosis.update({ where: { id: diagnosis.id }, data: { aiTaskId, aiSummary } }); } catch { aiSummary = null; } return { id: diagnosis.id, status: diagnosis.status, confidence: result.confidence, dataWindow: { start: periodStart.toISOString(), end: periodEnd.toISOString() }, observedFacts: result.observedFacts, candidateCauses: result.causes, recommendations: result.recommendations, aiTaskId, aiSummary, evidenceSnapshotIds: [previous.id, current.id] }; }
+export async function listDiagnostics(auth: AuthContext, workspaceId: string, campaignId?: string) { await requireWorkspaceAccess(auth, workspaceId); const diagnoses = await prisma.performanceDiagnosis.findMany({ where: { workspaceId, ...(campaignId ? { campaignId } : {}) }, include: { recommendations: true }, orderBy: { createdAt: 'desc' }, take: 50 }); return diagnoses.map((diagnosis) => ({ ...diagnosis, confidence: diagnosis.confidence.toString(), recommendations: diagnosis.recommendations.map((recommendation) => ({ ...recommendation })) })); }
+export async function listCreativeFatigue(auth: AuthContext, workspaceId: string) { await requireWorkspaceAccess(auth, workspaceId); const signals = await prisma.creativeFatigueSignal.findMany({ where: { workspaceId }, include: { creativeVersion: { include: { creative: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }); return signals.map((signal) => ({ ...signal, score: signal.score.toString(), confidence: signal.confidence.toString() })); }
+export async function detectCreativeFatigue(auth: AuthContext, workspaceId: string, creativeVersionId: string, requestId: string) { await writable(auth, workspaceId); const version = await prisma.creativeVersion.findFirst({ where: { id: creativeVersionId, creative: { workspaceId } }, select: { id: true } }); if (!version) throw new AppError('NOT_FOUND', 'Creative version not found.', 404); const snapshots = await prisma.performanceSnapshot.findMany({ where: { workspaceId, creativeVersionId }, orderBy: { periodEnd: 'desc' }, take: 2 }); if (snapshots.length < 2) throw new AppError('VALIDATION_ERROR', 'At least two performance snapshots are required to detect fatigue.', 400); const current = snapshotMetrics(snapshots[0]); const previous = snapshotMetrics(snapshots[1]); const ctrChange = ratioChange(current.ctr, previous.ctr); const cpcChange = ratioChange(current.cpc, previous.cpc); const score = clamp01(Math.max(ctrChange !== null && ctrChange < 0 ? -ctrChange : 0, cpcChange !== null && cpcChange > 0 ? cpcChange : 0)); const confidence = clamp01(0.4 + score); const signal = await prisma.creativeFatigueSignal.create({ data: { workspaceId, creativeVersionId, periodStart: snapshots[1].periodStart, periodEnd: snapshots[0].periodEnd, score: new Prisma.Decimal(score), confidence: new Prisma.Decimal(confidence), evidence: { ctrChange, cpcChange, previousSnapshotId: snapshots[1].id, currentSnapshotId: snapshots[0].id } } }); await prisma.auditLog.create({ data: { workspaceId, userId: auth.userId, action: 'analytics.creative_fatigue.detect', entityType: 'CreativeFatigueSignal', entityId: signal.id, afterJson: { creativeVersionId, score, confidence }, requestReference: requestId } }); return { ...signal, score: signal.score.toString(), confidence: signal.confidence.toString() }; }
