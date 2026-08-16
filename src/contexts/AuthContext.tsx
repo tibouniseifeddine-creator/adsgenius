@@ -14,10 +14,10 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const API_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000';
+const API_URL = ((import.meta as any).env?.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 function mapUser(apiUser: any): User {
-  return { id: apiUser.id, email: apiUser.email, name: apiUser.name, role: 'owner', businessId: apiUser.id };
+  return { id: apiUser.id, email: apiUser.email, name: apiUser.name, role: 'owner', businessId: apiUser.businessId ?? apiUser.id };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -43,29 +43,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!token) { setLoading(false); return; }
     authenticate('/api/auth/me')
       .then(data => setUser(mapUser(data.user)))
-      .catch(() => localStorage.removeItem('adsgenius_token'))
+      .catch(() => { localStorage.removeItem('adsgenius_token'); setUser(null); })
       .finally(() => setLoading(false));
   }, []);
 
   const login = async (email: string, password: string) => {
     setError(null);
-    try {
-      const data = await authenticate('/api/auth/login', { email, password });
-      localStorage.setItem('adsgenius_token', data.token);
-      setUser(mapUser(data.user));
-    } catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
+    const data = await authenticate('/api/auth/login', { email, password });
+    localStorage.setItem('adsgenius_token', data.token);
+    setUser(mapUser(data.user));
   };
 
   const register = async (data: RegisterData) => {
     setError(null);
-    try {
-      const result = await authenticate('/api/auth/register', data);
-      localStorage.setItem('adsgenius_token', result.token);
-      setUser(mapUser(result.user));
-    } catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
+    const result = await authenticate('/api/auth/register', data);
+    localStorage.setItem('adsgenius_token', result.token);
+    setUser(mapUser(result.user));
   };
 
-  const logout = () => { localStorage.removeItem('adsgenius_token'); setUser(null); setBusiness(null); };
+  const logout = () => { localStorage.removeItem('adsgenius_token'); setUser(null); setBusiness(null); setError(null); };
 
   return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error }}>{children}</AuthContext.Provider>;
 }
