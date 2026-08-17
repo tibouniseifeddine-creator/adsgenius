@@ -1,21 +1,15 @@
 name: AdsGenius Phase 14
-
 on:
   push:
-    branches:
-      - 'phase-14/**'
+    branches: ['phase-14/**']
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   release-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,6 +17,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm install --no-audit --no-fund
-      # This frontend-only repository does not define db:generate, lint, or test scripts.
-      # The production build already runs TypeScript validation through tsc.
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
       - run: npm run build
