@@ -15,9 +15,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const API_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000';
+const TOKEN_KEY = 'adsgenius_token';
 
 function mapUser(apiUser: any): User {
   return { id: apiUser.id, email: apiUser.email, name: apiUser.name, role: 'owner', businessId: apiUser.id };
+}
+
+function tokenExpiresAt(token: string): number | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -26,8 +36,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const clearSession = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    setUser(null);
+    setBusiness(null);
+  };
+
   const authenticate = async (path: string, body?: unknown) => {
-    const token = localStorage.getItem('adsgenius_token');
+    const token = localStorage.getItem(TOKEN_KEY);
     const response = await fetch(`${API_URL}${path}`, {
       method: body ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -39,19 +55,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('adsgenius_token');
+    const token = localStorage.getItem(TOKEN_KEY);
     if (!token) { setLoading(false); return; }
+    const expiresAt = tokenExpiresAt(token);
+    if (expiresAt !== null && expiresAt <= Date.now()) {
+      clearSession();
+      setLoading(false);
+      return;
+    }
     authenticate('/api/auth/me')
       .then(data => setUser(mapUser(data.user)))
-      .catch(() => localStorage.removeItem('adsgenius_token'))
+      .catch(() => clearSession())
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const expiresAt = token ? tokenExpiresAt(token) : null;
+    if (!expiresAt) return;
+    const delay = Math.max(0, expiresAt - Date.now());
+    const timer = window.setTimeout(clearSession, delay);
+    return () => window.clearTimeout(timer);
+  }, [user]);
+
+  const saveToken = (token: string) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    const expiresAt = tokenExpiresAt(token);
+    if (expiresAt !== null && expiresAt <= Date.now()) throw new Error('Authentication session expired');
+  };
 
   const login = async (email: string, password: string) => {
     setError(null);
     try {
       const data = await authenticate('/api/auth/login', { email, password });
-      localStorage.setItem('adsgenius_token', data.token);
+      saveToken(data.token);
       setUser(mapUser(data.user));
     } catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
   };
@@ -60,12 +97,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const result = await authenticate('/api/auth/register', data);
-      localStorage.setItem('adsgenius_token', result.token);
+      saveToken(result.token);
       setUser(mapUser(result.user));
     } catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
   };
 
-  const logout = () => { localStorage.removeItem('adsgenius_token'); setUser(null); setBusiness(null); };
+  const logout = () => clearSession();
 
   return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error }}>{children}</AuthContext.Provider>;
 }
