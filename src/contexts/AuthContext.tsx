@@ -14,7 +14,8 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const API_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000';
+const configuredApiUrl = (import.meta as any).env?.VITE_API_URL?.trim();
+const API_URL = configuredApiUrl || ((import.meta as any).env?.DEV ? 'http://localhost:4000' : '');
 const TOKEN_KEY = 'adsgenius_token';
 
 function mapUser(apiUser: any): User {
@@ -43,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const authenticate = async (path: string, body?: unknown) => {
+    if (!API_URL) throw new Error('Production API is not configured. Set VITE_API_URL in the deployment environment.');
     const token = localStorage.getItem(TOKEN_KEY);
     const response = await fetch(`${API_URL}${path}`, {
       method: body ? 'POST' : 'GET',
