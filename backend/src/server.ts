@@ -7,15 +7,18 @@ import { PrismaClient } from '@prisma/client';
 export const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.PORT ?? 4000);
-const jwtSecret = process.env.JWT_SECRET;
-
-if (!jwtSecret) throw new Error('JWT_SECRET is required');
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN?.split(',') ?? true, credentials: true }));
 app.use(express.json());
 
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim();
+  if (!secret) throw new Error('JWT_SECRET is not configured');
+  return secret;
+}
+
 function tokenFor(userId: string) {
-  return jwt.sign({ sub: userId }, jwtSecret!, { expiresIn: '7d' });
+  return jwt.sign({ sub: userId }, getJwtSecret(), { expiresIn: '7d' });
 }
 
 async function userResponse(userId: string) {
@@ -25,10 +28,19 @@ async function userResponse(userId: string) {
   });
 }
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return res.json({ ok: true, database: true, jwtConfigured: Boolean(process.env.JWT_SECRET) });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    return res.status(503).json({ ok: false, database: false, jwtConfigured: Boolean(process.env.JWT_SECRET) });
+  }
+});
 
 app.post('/api/auth/register', async (req, res) => {
   try {
+    getJwtSecret();
     const { email, password, name, businessName } = req.body as Record<string, string>;
     if (!email || !password || !name || !businessName || password.length < 8) {
       return res.status(400).json({ error: 'email, name, businessName and a password of at least 8 characters are required' });
@@ -47,20 +59,21 @@ app.post('/api/auth/register', async (req, res) => {
     });
     return res.status(201).json({ user: await userResponse(user.id), token: tokenFor(user.id) });
   } catch (error) {
-    console.error(error);
+    console.error('Registration failed:', error);
     return res.status(500).json({ error: 'Registration failed' });
   }
 });
 
 app.post('/api/auth/login', async (req, res) => {
   try {
+    getJwtSecret();
     const { email, password } = req.body as Record<string, string>;
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
     const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: 'Invalid email or password' });
     return res.json({ user: await userResponse(user.id), token: tokenFor(user.id) });
   } catch (error) {
-    console.error(error);
+    console.error('Login failed:', error);
     return res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -69,7 +82,7 @@ app.get('/api/auth/me', async (req, res) => {
   try {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
-    const payload = jwt.verify(header.slice(7), jwtSecret!) as jwt.JwtPayload;
+    const payload = jwt.verify(header.slice(7), getJwtSecret()) as jwt.JwtPayload;
     const user = await userResponse(String(payload.sub));
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
     return res.json({ user });
