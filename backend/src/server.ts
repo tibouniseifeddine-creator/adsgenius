@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 
-const app = express();
+export const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.PORT ?? 4000);
 const jwtSecret = process.env.JWT_SECRET;
@@ -78,4 +78,6 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
-app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
+if (!process.env.VERCEL) {
+  app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
+}
