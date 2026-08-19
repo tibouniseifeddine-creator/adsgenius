@@ -14,7 +14,10 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const API_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000';
+// Production uses the same origin, so the deployed frontend and API can never drift apart.
+// VITE_API_URL remains available for local/staged deployments that use a separate API host.
+const configuredApiUrl = (import.meta as any).env?.VITE_API_URL?.trim();
+const API_URL = configuredApiUrl || ((import.meta as any).env?.DEV ? 'http://localhost:4000' : '');
 const TOKEN_KEY = 'adsgenius_token';
 
 function mapUser(apiUser: any): User {
@@ -25,9 +28,7 @@ function tokenExpiresAt(token: string): number | null {
   try {
     const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
     return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -36,11 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const clearSession = () => {
-    localStorage.removeItem(TOKEN_KEY);
-    setUser(null);
-    setBusiness(null);
-  };
+  const clearSession = () => { localStorage.removeItem(TOKEN_KEY); setUser(null); setBusiness(null); };
 
   const authenticate = async (path: string, body?: unknown) => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -58,23 +55,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) { setLoading(false); return; }
     const expiresAt = tokenExpiresAt(token);
-    if (expiresAt !== null && expiresAt <= Date.now()) {
-      clearSession();
-      setLoading(false);
-      return;
-    }
-    authenticate('/api/auth/me')
-      .then(data => setUser(mapUser(data.user)))
-      .catch(() => clearSession())
-      .finally(() => setLoading(false));
+    if (expiresAt !== null && expiresAt <= Date.now()) { clearSession(); setLoading(false); return; }
+    authenticate('/api/auth/me').then(data => setUser(mapUser(data.user))).catch(() => clearSession()).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
     const expiresAt = token ? tokenExpiresAt(token) : null;
     if (!expiresAt) return;
-    const delay = Math.max(0, expiresAt - Date.now());
-    const timer = window.setTimeout(clearSession, delay);
+    const timer = window.setTimeout(clearSession, Math.max(0, expiresAt - Date.now()));
     return () => window.clearTimeout(timer);
   }, [user]);
 
@@ -86,24 +75,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string) => {
     setError(null);
-    try {
-      const data = await authenticate('/api/auth/login', { email, password });
-      saveToken(data.token);
-      setUser(mapUser(data.user));
-    } catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
+    try { const data = await authenticate('/api/auth/login', { email, password }); saveToken(data.token); setUser(mapUser(data.user)); }
+    catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
   };
 
   const register = async (data: RegisterData) => {
     setError(null);
-    try {
-      const result = await authenticate('/api/auth/register', data);
-      saveToken(result.token);
-      setUser(mapUser(result.user));
-    } catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
+    try { const result = await authenticate('/api/auth/register', data); saveToken(result.token); setUser(mapUser(result.user)); }
+    catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
   };
 
   const logout = () => clearSession();
-
   return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error }}>{children}</AuthContext.Provider>;
 }
 

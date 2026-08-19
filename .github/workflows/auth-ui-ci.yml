@@ -18,7 +18,7 @@ jobs:
           node-version: 20
           cache: npm
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Frontend typecheck and build
         run: npm run build
       - name: Install backend dependencies
