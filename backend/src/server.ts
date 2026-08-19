@@ -104,3 +104,5 @@ app.get('/api/auth/me', async (req, res) => {
 if (!process.env.VERCEL) {
   app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
 }
+
+export default app;
