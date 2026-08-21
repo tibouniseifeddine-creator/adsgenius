@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, LogOut, Menu } from 'lucide-react';
+import { Bell, LogOut, Menu, Sparkles } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDemo } from '../../contexts/DemoContext';
@@ -8,7 +8,7 @@ import { useSidebar } from './Layout';
 
 export function Header() {
   const { language, setLanguage, isRTL } = useLanguage();
-  const { isDemoMode } = useDemo();
+  const { isDemoMode, toggleDemoMode } = useDemo();
   const { user, logout } = useAuth();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
@@ -17,6 +17,14 @@ export function Header() {
       <div className="flex items-center gap-3">
         <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"><Menu className="w-5 h-5" /></button>
         {isDemoMode && <Badge variant="warning" className="text-xs">DEMO MODE</Badge>}
+        <button
+          onClick={toggleDemoMode}
+          title={isDemoMode ? 'Exit demo preview and return to your real (empty) data' : 'Preview the app filled with sample data -- this is not your real data'}
+          className="hidden sm:flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 px-2 py-1 rounded-lg hover:bg-gray-100"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          {isDemoMode ? 'Exit Demo' : 'Try Demo Data'}
+        </button>
         {user && <span className="hidden sm:block text-sm text-gray-600">{user.name}</span>}
       </div>
       <div className="flex items-center gap-3">
