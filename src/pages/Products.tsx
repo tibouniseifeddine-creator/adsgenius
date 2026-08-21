@@ -1,21 +1,26 @@
-import React, { useState } from 'react';
-import { Plus, Search, Eye, Wand2, X, Package } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, Search, Eye, Wand2, X, Package, Loader2, AlertTriangle } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Select } from '../components/ui/Select';
-import { useDemo } from '../contexts/DemoContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Product } from '../types';
+import { apiFetch } from '../lib/api';
 
+// This page is connected to the real backend (GET/POST /api/products) instead of
+// DemoContext's fake data -- see COWORK_ADSGENIUS_REALDATA_PLAN.md for why every
+// other page in the app still uses the demo layer and hasn't migrated yet.
 export function Products() {
   const { t } = useLanguage();
-  const { products, addProduct } = useDemo();
-  const { business } = useAuth();
   const navigate = useNavigate();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
@@ -32,36 +37,53 @@ export function Products() {
     expectedReturnRate: '5',
   });
 
+  const loadProducts = () => {
+    setLoading(true);
+    setLoadError(null);
+    apiFetch<{ products: Product[] }>('/api/products')
+      .then(data => setProducts(data.products))
+      .catch(e => setLoadError(e instanceof Error ? e.message : 'Failed to load products'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadProducts(); }, []);
+
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.sku.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newProduct: Product = {
-      id: `prod_${Date.now()}`,
-      businessId: business?.id || 'demo',
-      name: form.name,
-      sku: form.sku || `SKU-${Date.now().toString(36).toUpperCase()}`,
-      category: form.category || 'General',
-      description: form.description,
-      purchaseCost: Number(form.purchaseCost) || 0,
-      sellingPrice: Number(form.sellingPrice) || 0,
-      stock: Number(form.stock) || 0,
-      images: [],
-      videos: [],
-      deliveryCost: Number(form.deliveryCost) || 0,
-      packagingCost: Number(form.packagingCost) || 0,
-      expectedCancellationRate: Number(form.expectedCancellationRate) || 15,
-      expectedReturnRate: Number(form.expectedReturnRate) || 5,
-    };
-    addProduct(newProduct);
-    setShowModal(false);
-    setForm({
-      name: '', sku: '', category: '', description: '', purchaseCost: '', sellingPrice: '',
-      stock: '', deliveryCost: '', packagingCost: '', expectedCancellationRate: '15', expectedReturnRate: '5',
-    });
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { product } = await apiFetch<{ product: Product }>('/api/products', {
+        body: {
+          name: form.name,
+          sku: form.sku || `SKU-${Date.now().toString(36).toUpperCase()}`,
+          category: form.category || 'General',
+          description: form.description,
+          purchaseCost: Number(form.purchaseCost) || 0,
+          sellingPrice: Number(form.sellingPrice) || 0,
+          stock: Number(form.stock) || 0,
+          deliveryCost: Number(form.deliveryCost) || 0,
+          packagingCost: Number(form.packagingCost) || 0,
+          expectedCancellationRate: Number(form.expectedCancellationRate) || 15,
+          expectedReturnRate: Number(form.expectedReturnRate) || 5,
+        }
+      });
+      setProducts(prev => [product, ...prev]);
+      setShowModal(false);
+      setForm({
+        name: '', sku: '', category: '', description: '', purchaseCost: '', sellingPrice: '',
+        stock: '', deliveryCost: '', packagingCost: '', expectedCancellationRate: '15', expectedReturnRate: '5',
+      });
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Failed to save product');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -74,56 +96,71 @@ export function Products() {
         <div className="mb-4">
           <Input placeholder={t('searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} className="max-w-md" />
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr>
-                <th className="px-4 py-3 text-left">{t('productName')}</th>
-                <th className="px-4 py-3 text-left">{t('sku')}</th>
-                <th className="px-4 py-3 text-left">{t('category')}</th>
-                <th className="px-4 py-3 text-left">{t('price')}</th>
-                <th className="px-4 py-3 text-left">{t('stock')}</th>
-                <th className="px-4 py-3 text-left">{t('status')}</th>
-                <th className="px-4 py-3 text-left">{t('actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map(product => (
-                <tr key={product.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {product.images[0] && <img src={product.images[0]} alt="" className="w-10 h-10 rounded-lg object-cover" />}
-                      <div>
-                        <p className="font-medium text-gray-900">{product.name}</p>
-                        <p className="text-xs text-gray-500">{product.description.slice(0, 50)}...</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-500">{product.sku}</td>
-                  <td className="px-4 py-3 text-gray-500">{product.category}</td>
-                  <td className="px-4 py-3 font-medium">{product.sellingPrice.toLocaleString()} DZD</td>
-                  <td className="px-4 py-3">{product.stock}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant={product.stock > 0 ? 'success' : 'danger'}>{product.stock > 0 ? 'Active' : 'Out of Stock'}</Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => navigate(`/products/${product.id}`)}><Eye className="w-4 h-4" /></Button>
-                      {product.aiAnalysis ? <Badge variant="success" className="text-xs">AI Analyzed</Badge> : <Button variant="secondary" size="sm"><Wand2 className="w-4 h-4 mr-1" /> Analyze</Button>}
-                    </div>
-                  </td>
+        {loading && (
+          <div className="text-center py-12 text-gray-500 flex flex-col items-center gap-2">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <p>Loading your products...</p>
+          </div>
+        )}
+        {!loading && loadError && (
+          <div className="text-center py-12">
+            <AlertTriangle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+            <p className="text-red-600 mb-3">{loadError}</p>
+            <Button variant="secondary" size="sm" onClick={loadProducts}>Retry</Button>
+          </div>
+        )}
+        {!loading && !loadError && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-4 py-3 text-left">{t('productName')}</th>
+                  <th className="px-4 py-3 text-left">{t('sku')}</th>
+                  <th className="px-4 py-3 text-left">{t('category')}</th>
+                  <th className="px-4 py-3 text-left">{t('price')}</th>
+                  <th className="px-4 py-3 text-left">{t('stock')}</th>
+                  <th className="px-4 py-3 text-left">{t('status')}</th>
+                  <th className="px-4 py-3 text-left">{t('actions')}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {filtered.length === 0 && (
-            <div className="text-center py-12">
-              <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 mb-2">{t('noData')}</p>
-              <Button variant="secondary" size="sm" onClick={() => setShowModal(true)}>{t('addFirstProduct')}</Button>
-            </div>
-          )}
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filtered.map(product => (
+                  <tr key={product.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {product.images[0] && <img src={product.images[0]} alt="" className="w-10 h-10 rounded-lg object-cover" />}
+                        <div>
+                          <p className="font-medium text-gray-900">{product.name}</p>
+                          <p className="text-xs text-gray-500">{product.description.slice(0, 50)}...</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">{product.sku}</td>
+                    <td className="px-4 py-3 text-gray-500">{product.category}</td>
+                    <td className="px-4 py-3 font-medium">{product.sellingPrice.toLocaleString()} DZD</td>
+                    <td className="px-4 py-3">{product.stock}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant={product.stock > 0 ? 'success' : 'danger'}>{product.stock > 0 ? 'Active' : 'Out of Stock'}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => navigate(`/products/${product.id}`)}><Eye className="w-4 h-4" /></Button>
+                        {product.aiAnalysis ? <Badge variant="success" className="text-xs">AI Analyzed</Badge> : <Button variant="secondary" size="sm"><Wand2 className="w-4 h-4 mr-1" /> Analyze</Button>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filtered.length === 0 && (
+              <div className="text-center py-12">
+                <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500 mb-2">{t('noData')}</p>
+                <Button variant="secondary" size="sm" onClick={() => setShowModal(true)}>{t('addFirstProduct')}</Button>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {showModal && (
@@ -188,9 +225,15 @@ export function Products() {
                   />
                 </div>
               </div>
+              {saveError && (
+                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  {saveError}
+                </div>
+              )}
               <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button type="button" variant="secondary" onClick={() => setShowModal(false)}>{t('cancel')}</Button>
-                <Button type="submit">{t('save')}</Button>
+                <Button type="button" variant="secondary" onClick={() => setShowModal(false)} disabled={saving}>{t('cancel')}</Button>
+                <Button type="submit" disabled={saving}>{saving ? 'Saving...' : t('save')}</Button>
               </div>
             </form>
           </div>
