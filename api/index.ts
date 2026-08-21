@@ -103,4 +103,109 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
+// Shared auth guard for every endpoint below. Verifies the bearer JWT the same
+// way /api/auth/me already does, and attaches the user id to the request.
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
+    const payload = jwt.verify(header.slice(7), getJwtSecret()) as jwt.JwtPayload;
+    (req as any).userId = String(payload.sub);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
+
+// Every user gets exactly one workspace at registration (see /api/auth/register).
+// This resolves it so product/campaign/etc. data is scoped per-account.
+async function getUserWorkspaceId(db: PrismaClient, userId: string): Promise<string | null> {
+  const membership = await db.workspaceMember.findFirst({
+    where: { userId, status: 'ACTIVE' },
+    orderBy: { createdAt: 'asc' },
+    select: { workspaceId: true }
+  });
+  return membership?.workspaceId ?? null;
+}
+
+// Translates the DB's Product row into the shape src/types/index.ts already expects
+// on the frontend (purchaseCost/sellingPrice/deliveryCost naming, images/videos as
+// empty arrays since there's no asset storage yet). This keeps today's patch small:
+// the frontend Product type does not need to change to consume real data. See
+// COWORK_ADSGENIUS_REALDATA_PLAN.md section 4 for the naming-mismatch background.
+function toApiProduct(p: {
+  id: string; workspaceId: string; name: string; sku: string | null; category: string | null;
+  description: string; baseCost: unknown; salePrice: unknown; stock: number; shippingCost: unknown;
+  packagingCost: unknown; expectedCancellationRate: unknown; expectedReturnRate: unknown;
+}) {
+  return {
+    id: p.id,
+    businessId: p.workspaceId,
+    name: p.name,
+    sku: p.sku ?? '',
+    category: p.category ?? '',
+    description: p.description,
+    purchaseCost: Number(p.baseCost),
+    sellingPrice: Number(p.salePrice),
+    stock: p.stock,
+    images: [] as string[],
+    videos: [] as string[],
+    deliveryCost: Number(p.shippingCost),
+    packagingCost: Number(p.packagingCost),
+    expectedCancellationRate: Number(p.expectedCancellationRate),
+    expectedReturnRate: Number(p.expectedReturnRate)
+  };
+}
+
+app.get('/api/products', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.json({ products: [] });
+    const rows = await db.product.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    return res.json({ products: rows.map(toApiProduct) });
+  } catch (error) {
+    console.error('List products failed:', error);
+    return res.status(500).json({ error: 'Failed to load products' });
+  }
+});
+
+app.post('/api/products', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const sellingPrice = Number(body.sellingPrice);
+    if (!name || !Number.isFinite(sellingPrice)) {
+      return res.status(400).json({ error: 'name and sellingPrice are required' });
+    }
+
+    const created = await db.product.create({
+      data: {
+        workspaceId,
+        name,
+        description: typeof body.description === 'string' ? body.description : '',
+        sku: typeof body.sku === 'string' && body.sku.trim() ? body.sku.trim() : null,
+        category: typeof body.category === 'string' && body.category.trim() ? body.category.trim() : null,
+        baseCost: Number(body.purchaseCost) || 0,
+        salePrice: sellingPrice,
+        currency: 'DZD',
+        stock: Number(body.stock) || 0,
+        shippingCost: Number(body.deliveryCost) || 0,
+        packagingCost: Number(body.packagingCost) || 0,
+        expectedCancellationRate: Number(body.expectedCancellationRate) || 0,
+        expectedReturnRate: Number(body.expectedReturnRate) || 0
+      }
+    });
+    return res.status(201).json({ product: toApiProduct(created) });
+  } catch (error: any) {
+    console.error('Create product failed:', error);
+    if (error?.code === 'P2002') return res.status(409).json({ error: 'A product with this SKU already exists' });
+    return res.status(500).json({ error: 'Failed to create product' });
+  }
+});
+
 export default app;
