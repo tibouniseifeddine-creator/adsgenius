@@ -21,18 +21,47 @@ interface DemoContextType {
 
 const DemoContext = createContext<DemoContextType | undefined>(undefined);
 
+// Demo mode is OFF by default. A real, authenticated account must never be shown
+// seeded/fake business data as if it were their own -- that was the previous
+// behavior (isDemoMode defaulted to true and every list below was pre-seeded from
+// demoData regardless of who was logged in). Sample data is now only loaded when
+// the user explicitly opts in via toggleDemoMode (see Header's "Try Demo Data").
 export function DemoProvider({ children }: { children: React.ReactNode }) {
-  const [isDemoMode, setIsDemoMode] = useState(true);
-  const [products, setProducts] = useState<Product[]>([demoData.demoProduct]);
-  const [campaigns] = useState<Campaign[]>([demoData.demoCampaign]);
-  const [orders, setOrders] = useState<Order[]>(demoData.demoOrders);
-  const [creatives] = useState<Creative[]>(demoData.demoCreatives);
-  const [audiences] = useState<Audience[]>(demoData.demoAudiences);
-  const [recommendations, setRecommendations] = useState<AIRecommendation[]>(demoData.demoRecommendations);
-  const [metrics] = useState<CampaignMetrics[]>(demoData.demoCampaignMetrics);
-  const [integrations] = useState<Integration[]>(demoData.demoIntegrations);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [creatives, setCreatives] = useState<Creative[]>([]);
+  const [audiences, setAudiences] = useState<Audience[]>([]);
+  const [recommendations, setRecommendations] = useState<AIRecommendation[]>([]);
+  const [metrics, setMetrics] = useState<CampaignMetrics[]>([]);
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
 
-  const toggleDemoMode = () => setIsDemoMode(!isDemoMode);
+  const toggleDemoMode = () => {
+    const next = !isDemoMode;
+    setIsDemoMode(next);
+    if (next) {
+      // Load the bundled sample dataset for a preview -- this is not the user's real data.
+      setProducts([demoData.demoProduct]);
+      setCampaigns([demoData.demoCampaign]);
+      setOrders(demoData.demoOrders);
+      setCreatives(demoData.demoCreatives);
+      setAudiences(demoData.demoAudiences);
+      setRecommendations(demoData.demoRecommendations);
+      setMetrics(demoData.demoCampaignMetrics);
+      setIntegrations(demoData.demoIntegrations);
+    } else {
+      // Back to the account's real (currently empty, pending backend integration) data.
+      setProducts([]);
+      setCampaigns([]);
+      setOrders([]);
+      setCreatives([]);
+      setAudiences([]);
+      setRecommendations([]);
+      setMetrics([]);
+      setIntegrations([]);
+    }
+  };
 
   const addProduct = (product: Product) => {
     setProducts(prev => [...prev, product]);
