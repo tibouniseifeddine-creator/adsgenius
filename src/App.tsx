@@ -15,6 +15,7 @@ import { AIOptimizer } from './pages/AIOptimizer';
 import { Integrations } from './pages/Integrations';
 import { Settings } from './pages/Settings';
 import { Auth } from './pages/Auth';
+import { PublicOrderPage } from './pages/PublicOrderPage';
 import { useAuth } from './contexts/AuthContext';
 
 function ProtectedApp() {
@@ -42,6 +43,7 @@ function ProtectedApp() {
 function App() {
   return <BrowserRouter><Routes>
     <Route path="/auth" element={<Auth />} />
+    <Route path="/order/:productId" element={<PublicOrderPage />} />
     <Route path="*" element={<ProtectedApp />} />
   </Routes></BrowserRouter>;
 }
