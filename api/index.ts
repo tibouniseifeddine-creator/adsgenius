@@ -208,6 +208,98 @@ app.post('/api/products', requireAuth, async (req, res) => {
   }
 });
 
+// Translates the DB's Creative row into the shape src/types/index.ts already
+// expects (productId defaulted to '' instead of null/undefined, status
+// lowercased -- see toApiProduct() above for the same pattern). Creative
+// Studio was 100% fake/demo data before this; aiScore/aiExplanation/metrics
+// are left undefined since there is no real AI scoring or ad-spend data yet.
+function toApiCreative(c: {
+  id: string; workspaceId: string; productId: string | null; name: string; type: string;
+  status: string; angle: string | null; hook: string | null; primaryText: string | null;
+  headline: string | null; cta: string | null; url: string | null;
+}) {
+  return {
+    id: c.id,
+    productId: c.productId ?? '',
+    name: c.name,
+    type: c.type,
+    angle: c.angle ?? '',
+    url: c.url ?? undefined,
+    hook: c.hook ?? undefined,
+    primaryText: c.primaryText ?? undefined,
+    headline: c.headline ?? undefined,
+    cta: c.cta ?? undefined,
+    status: c.status.toLowerCase()
+  };
+}
+
+const CREATIVE_TYPES = new Set([
+  'image_ad', 'story', 'reel', 'carousel', 'facebook_feed', 'instagram_feed', 'instagram_story', 'instagram_reel'
+]);
+const CREATIVE_STATUSES = new Set(['draft', 'ready', 'approved', 'archived']);
+
+app.get('/api/creatives', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.json({ creatives: [] });
+    const rows = await db.creative.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    return res.json({ creatives: rows.map(toApiCreative) });
+  } catch (error) {
+    console.error('List creatives failed:', error);
+    return res.status(500).json({ error: 'Failed to load creatives' });
+  }
+});
+
+// There is no real AI generation yet, so every creative is entered by hand
+// here via the Creative Studio page's "Add Creative" form (mirrors how
+// /api/orders works for manual order entry -- see src/pages/Orders.tsx).
+app.post('/api/creatives', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    const typeInput = typeof body.type === 'string' ? body.type.trim() : '';
+    const type = CREATIVE_TYPES.has(typeInput) ? typeInput : 'image_ad';
+
+    const statusInput = typeof body.status === 'string' ? body.status.trim().toLowerCase() : 'draft';
+    const status = (CREATIVE_STATUSES.has(statusInput) ? statusInput : 'draft').toUpperCase();
+
+    const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+    // Same ownership check as /api/orders: a creative can never be attached
+    // to another workspace's product.
+    if (productId) {
+      const product = await db.product.findFirst({ where: { id: productId, workspaceId } });
+      if (!product) return res.status(400).json({ error: 'Product not found' });
+    }
+
+    const created = await db.creative.create({
+      data: {
+        workspaceId,
+        productId,
+        name,
+        type,
+        status: status as any,
+        angle: typeof body.angle === 'string' ? body.angle.trim() : null,
+        hook: typeof body.hook === 'string' ? body.hook.trim() : null,
+        primaryText: typeof body.primaryText === 'string' ? body.primaryText.trim() : null,
+        headline: typeof body.headline === 'string' ? body.headline.trim() : null,
+        cta: typeof body.cta === 'string' ? body.cta.trim() : null,
+        url: typeof body.url === 'string' && body.url.trim() ? body.url.trim() : null
+      }
+    });
+    return res.status(201).json({ creative: toApiCreative(created) });
+  } catch (error) {
+    console.error('Create creative failed:', error);
+    return res.status(500).json({ error: 'Failed to create creative' });
+  }
+});
+
 // Translates the DB's Order row into the shape src/types/index.ts already expects
 // (businessId naming, orderDate as an ISO string, status lowercased since the
 // DB enum is uppercase with the same words -- see toApiProduct() above for the
