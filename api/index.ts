@@ -208,4 +208,134 @@ app.post('/api/products', requireAuth, async (req, res) => {
   }
 });
 
+// Translates the DB's Order row into the shape src/types/index.ts already expects
+// (businessId naming, orderDate as an ISO string, status lowercased since the
+// DB enum is uppercase with the same words -- see toApiProduct() above for the
+// same pattern and COWORK_ADSGENIUS_REALDATA_PLAN.md for the background).
+function toApiOrder(o: {
+  id: string; workspaceId: string; productId: string | null; customerName: string; phone: string;
+  wilaya: string; commune: string; address: string; productName: string; quantity: number;
+  price: unknown; deliveryFee: unknown; total: unknown; status: string; deliveryCompany: string | null;
+  trackingNumber: string | null; createdAt: Date;
+}) {
+  return {
+    id: o.id,
+    businessId: o.workspaceId,
+    customerName: o.customerName,
+    phone: o.phone,
+    wilaya: o.wilaya,
+    commune: o.commune,
+    address: o.address,
+    productId: o.productId ?? '',
+    productName: o.productName,
+    quantity: o.quantity,
+    price: Number(o.price),
+    deliveryFee: Number(o.deliveryFee),
+    total: Number(o.total),
+    orderDate: o.createdAt.toISOString(),
+    status: o.status.toLowerCase(),
+    deliveryCompany: o.deliveryCompany ?? undefined,
+    trackingNumber: o.trackingNumber ?? undefined
+  };
+}
+
+const ORDER_STATUSES = new Set([
+  'new', 'pending_confirmation', 'confirmed', 'preparing', 'shipped',
+  'out_for_delivery', 'delivered', 'cancelled', 'refused', 'returned'
+]);
+
+app.get('/api/orders', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.json({ orders: [] });
+    const rows = await db.order.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    return res.json({ orders: rows.map(toApiOrder) });
+  } catch (error) {
+    console.error('List orders failed:', error);
+    return res.status(500).json({ error: 'Failed to load orders' });
+  }
+});
+
+// There is no storefront/checkout yet, so every order is created by hand
+// here via the Orders page's "Add Order" form (see src/pages/Orders.tsx).
+app.post('/api/orders', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+    const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    const wilaya = typeof body.wilaya === 'string' ? body.wilaya.trim() : '';
+    const productName = typeof body.productName === 'string' ? body.productName.trim() : '';
+    const price = Number(body.price);
+    if (!customerName || !phone || !wilaya || !productName || !Number.isFinite(price)) {
+      return res.status(400).json({ error: 'customerName, phone, wilaya, productName and price are required' });
+    }
+    const quantity = Number(body.quantity) > 0 ? Math.round(Number(body.quantity)) : 1;
+    const deliveryFee = Number(body.deliveryFee) || 0;
+    const total = Number(body.total);
+    const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+
+    // Verify the referenced product (if any) actually belongs to this workspace,
+    // so an order can never be attached to another account's product.
+    if (productId) {
+      const product = await db.product.findFirst({ where: { id: productId, workspaceId } });
+      if (!product) return res.status(400).json({ error: 'Product not found' });
+    }
+
+    const statusInput = typeof body.status === 'string' ? body.status.trim().toLowerCase() : 'pending_confirmation';
+    const status = ORDER_STATUSES.has(statusInput) ? statusInput.toUpperCase() : 'PENDING_CONFIRMATION';
+
+    const created = await db.order.create({
+      data: {
+        workspaceId,
+        productId,
+        customerName,
+        phone,
+        wilaya,
+        commune: typeof body.commune === 'string' ? body.commune.trim() : '',
+        address: typeof body.address === 'string' ? body.address.trim() : '',
+        productName,
+        quantity,
+        price,
+        deliveryFee,
+        total: Number.isFinite(total) ? total : price * quantity + deliveryFee,
+        status: status as any
+      }
+    });
+    return res.status(201).json({ order: toApiOrder(created) });
+  } catch (error) {
+    console.error('Create order failed:', error);
+    return res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// Status-only update -- used by the confirm/ship/cancel action buttons on the Orders page.
+app.patch('/api/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const statusInput = typeof (req.body as Record<string, unknown>).status === 'string'
+      ? ((req.body as Record<string, unknown>).status as string).trim().toLowerCase() : '';
+    if (!ORDER_STATUSES.has(statusInput)) return res.status(400).json({ error: 'A valid status is required' });
+
+    const existing = await db.order.findFirst({ where: { id: req.params.id, workspaceId } });
+    if (!existing) return res.status(404).json({ error: 'Order not found' });
+
+    const updated = await db.order.update({
+      where: { id: existing.id },
+      data: { status: statusInput.toUpperCase() as any }
+    });
+    return res.json({ order: toApiOrder(updated) });
+  } catch (error) {
+    console.error('Update order failed:', error);
+    return res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
 export default app;
