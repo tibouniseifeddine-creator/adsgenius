@@ -1,5 +1,6 @@
 import React from 'react';
-import { Bell, LogOut, Menu, Sparkles } from 'lucide-react';
+import { Bell, LayoutDashboard, LogOut, Menu, Sparkles } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDemo } from '../../contexts/DemoContext';
@@ -11,11 +12,22 @@ export function Header() {
   const { isDemoMode, toggleDemoMode } = useDemo();
   const { user, logout } = useAuth();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <header className={`h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-6 fixed top-0 ${isRTL ? 'right-0 md:right-64 left-0' : 'left-0 md:left-64 right-0'} z-30 transition-all duration-300`}>
       <div className="flex items-center gap-3">
         <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"><Menu className="w-5 h-5" /></button>
+        {location.pathname !== '/' && (
+          <button
+            onClick={() => navigate('/')}
+            title="Back to Dashboard"
+            className="p-2 text-gray-600 hover:text-blue-600 hover:bg-gray-100 rounded-lg"
+          >
+            <LayoutDashboard className="w-5 h-5" />
+          </button>
+        )}
         {isDemoMode && <Badge variant="warning" className="text-xs">DEMO MODE</Badge>}
         <button
           onClick={toggleDemoMode}
