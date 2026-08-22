@@ -28,6 +28,7 @@ enum ProductVariantStatus {
 enum CreativeStatus {
   DRAFT
   READY
+  APPROVED
   ARCHIVED
 }
 
@@ -216,9 +217,18 @@ model Creative {
   workspaceId String          @map("workspace_id")
   productId   String?         @map("product_id")
   name        String
+  // Plain string (not a Postgres enum) so the frontend's format union
+  // (image_ad/story/reel/carousel/facebook_feed/instagram_feed/instagram_story/
+  // instagram_reel -- see src/types/index.ts) can grow without a DB migration,
+  // matching how Product.category is already a free-form string.
+  type        String          @default("image_ad")
   status      CreativeStatus  @default(DRAFT)
   angle       String?
   hook        String?
+  primaryText String?         @map("primary_text")
+  headline    String?
+  cta         String?
+  url         String?
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
   workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
