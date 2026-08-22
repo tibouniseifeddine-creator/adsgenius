@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Phone, CheckCircle, XCircle, Truck, X, ClipboardList, Loader2, AlertTriangle } from 'lucide-react';
+import { Plus, Phone, MessageCircle, CheckCircle, XCircle, Truck, X, ClipboardList, Loader2, AlertTriangle } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
@@ -18,6 +18,17 @@ const ALL_STATUSES: OrderStatus[] = [
   'new', 'pending_confirmation', 'confirmed', 'preparing', 'shipped',
   'out_for_delivery', 'delivered', 'cancelled', 'refused', 'returned'
 ];
+
+// Best-effort local-to-international normalization for wa.me links (wa.me needs
+// digits only, no leading 0 or +). Defaults the leading 0 to Algeria's country
+// code since every other part of this app (wilaya/commune, DZD currency) is
+// Algeria-specific; a number already in international form is left as-is.
+function toWhatsAppNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('213')) return digits;
+  if (digits.startsWith('0')) return `213${digits.slice(1)}`;
+  return digits;
+}
 
 const emptyForm = {
   customerName: '', phone: '', wilaya: '', commune: '', address: '',
@@ -190,7 +201,18 @@ export function Orders() {
                         {order.status === 'confirmed' && (
                           <Button variant="secondary" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'shipped')}><Truck className="w-3 h-3" /></Button>
                         )}
-                        <Button variant="ghost" size="sm"><Phone className="w-3 h-3" /></Button>
+                        <Button
+                          variant="ghost" size="sm" title={`Call ${order.phone}`}
+                          onClick={() => { window.location.href = `tel:${order.phone}`; }}
+                        >
+                          <Phone className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="sm" title={`WhatsApp ${order.phone}`}
+                          onClick={() => window.open(`https://wa.me/${toWhatsAppNumber(order.phone)}`, '_blank', 'noopener,noreferrer')}
+                        >
+                          <MessageCircle className="w-3 h-3" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -240,16 +262,21 @@ export function Orders() {
                   <Input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('product')}</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('product')} *</label>
+                  {/* Locked to the real product catalog whenever one exists, so orders can't
+                      be attached to a freehand product name that doesn't match any stock
+                      record. The free-text fallback below only appears for a brand-new
+                      workspace that hasn't added any products yet. */}
                   <select
                     value={form.productId}
                     onChange={e => handleProductChange(e.target.value)}
+                    required={products.length > 0}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{products.length ? 'Select a product...' : 'No products yet -- type name below'}</option>
                     {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
-                  {!form.productId && (
+                  {products.length === 0 && (
                     <Input
                       className="mt-2"
                       placeholder="Product name"
