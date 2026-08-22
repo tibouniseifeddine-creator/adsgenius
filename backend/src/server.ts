@@ -311,28 +311,135 @@ app.post('/api/orders', requireAuth, async (req, res) => {
   }
 });
 
-// Status-only update -- used by the confirm/ship/cancel action buttons on the Orders page.
+// Full edit -- used both by the confirm/ship/cancel action buttons (status only)
+// and by the Orders page's "Edit Order" form (any subset of fields). Every
+// field is optional here: only keys actually present in the request body are
+// changed, so a status-only PATCH from the action buttons still works exactly
+// as before.
 app.patch('/api/orders/:id', requireAuth, async (req, res) => {
   try {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
 
-    const statusInput = typeof (req.body as Record<string, unknown>).status === 'string'
-      ? ((req.body as Record<string, unknown>).status as string).trim().toLowerCase() : '';
-    if (!ORDER_STATUSES.has(statusInput)) return res.status(400).json({ error: 'A valid status is required' });
-
     const existing = await db.order.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!existing) return res.status(404).json({ error: 'Order not found' });
 
-    const updated = await db.order.update({
-      where: { id: existing.id },
-      data: { status: statusInput.toUpperCase() as any }
-    });
+    const body = req.body as Record<string, unknown>;
+    const data: Record<string, unknown> = {};
+
+    if (typeof body.status === 'string') {
+      const statusInput = body.status.trim().toLowerCase();
+      if (!ORDER_STATUSES.has(statusInput)) return res.status(400).json({ error: 'A valid status is required' });
+      data.status = statusInput.toUpperCase();
+    }
+    if (typeof body.customerName === 'string') data.customerName = body.customerName.trim();
+    if (typeof body.phone === 'string') data.phone = body.phone.trim();
+    if (typeof body.wilaya === 'string') data.wilaya = body.wilaya.trim();
+    if (typeof body.commune === 'string') data.commune = body.commune.trim();
+    if (typeof body.address === 'string') data.address = body.address.trim();
+    if (typeof body.productName === 'string') data.productName = body.productName.trim();
+    if (body.productId !== undefined) {
+      const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+      if (productId) {
+        // Same ownership check as create: an edited order can never be re-pointed
+        // at another workspace's product.
+        const product = await db.product.findFirst({ where: { id: productId, workspaceId } });
+        if (!product) return res.status(400).json({ error: 'Product not found' });
+      }
+      data.productId = productId;
+    }
+    if (body.quantity !== undefined) data.quantity = Number(body.quantity) > 0 ? Math.round(Number(body.quantity)) : 1;
+    if (body.price !== undefined) data.price = Number(body.price) || 0;
+    if (body.deliveryFee !== undefined) data.deliveryFee = Number(body.deliveryFee) || 0;
+    if (body.total !== undefined) data.total = Number(body.total) || 0;
+
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No changes provided' });
+
+    const updated = await db.order.update({ where: { id: existing.id }, data: data as any });
     return res.json({ order: toApiOrder(updated) });
   } catch (error) {
     console.error('Update order failed:', error);
     return res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
+// ---- Public (unauthenticated) endpoints for the per-product landing page ----
+// PublicOrderPage.tsx (route /order/:productId) is the link you put as the
+// "Website URL" on a Facebook/Instagram/TikTok ad. Visitors land there, see
+// the product, and submitting creates a real order directly -- no login, no
+// workspace header, since the workspace is inferred from the product itself.
+// Never expose cost/margin fields here, only what a customer should see.
+app.get('/api/public/products/:id', async (req, res) => {
+  try {
+    const db = getPrisma();
+    const product = await db.product.findUnique({ where: { id: req.params.id } });
+    if (!product || !product.active) return res.status(404).json({ error: 'Product not found' });
+    return res.json({
+      product: {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        price: Number(product.salePrice),
+        currency: product.currency
+      }
+    });
+  } catch (error) {
+    console.error('Public product lookup failed:', error);
+    return res.status(500).json({ error: 'Failed to load product' });
+  }
+});
+
+const PUBLIC_ORDER_MAX_QUANTITY = 50;
+
+app.post('/api/public/orders', async (req, res) => {
+  try {
+    const db = getPrisma();
+    const body = req.body as Record<string, unknown>;
+
+    // Honeypot: a hidden field real visitors never see or fill. A simple bot
+    // that fills every input on the page trips this, and we silently no-op
+    // instead of creating an order or revealing that a check happened.
+    if (typeof body.website === 'string' && body.website.trim()) {
+      return res.status(201).json({ order: null });
+    }
+
+    const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
+    const customerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+    const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    const wilaya = typeof body.wilaya === 'string' ? body.wilaya.trim() : '';
+    if (!productId || !customerName || !phone || !wilaya) {
+      return res.status(400).json({ error: 'customerName, phone, wilaya and a valid product are required' });
+    }
+    const quantity = Math.min(Math.max(Math.round(Number(body.quantity)) || 1, 1), PUBLIC_ORDER_MAX_QUANTITY);
+
+    const product = await db.product.findUnique({ where: { id: productId } });
+    if (!product || !product.active) return res.status(404).json({ error: 'Product not found' });
+
+    const price = Number(product.salePrice);
+    const deliveryFee = Number(product.shippingCost);
+
+    const created = await db.order.create({
+      data: {
+        workspaceId: product.workspaceId,
+        productId: product.id,
+        customerName,
+        phone,
+        wilaya,
+        commune: typeof body.commune === 'string' ? body.commune.trim() : '',
+        address: typeof body.address === 'string' ? body.address.trim() : '',
+        productName: product.name,
+        quantity,
+        price,
+        deliveryFee,
+        total: price * quantity + deliveryFee,
+        status: 'NEW'
+      }
+    });
+    return res.status(201).json({ order: toApiOrder(created) });
+  } catch (error) {
+    console.error('Public order creation failed:', error);
+    return res.status(500).json({ error: 'Failed to submit order' });
   }
 });
 
