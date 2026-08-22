@@ -52,6 +52,19 @@ enum AITaskStatus {
   FAILED
 }
 
+enum OrderStatus {
+  NEW
+  PENDING_CONFIRMATION
+  CONFIRMED
+  PREPARING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUSED
+  RETURNED
+}
+
 model InfrastructureState {
   key       String   @id
   value     String
@@ -91,6 +104,7 @@ model Workspace {
   auditLogs          AuditLog[]
   products           Product[]
   creatives          Creative[]
+  orders             Order[]
   aiTasks            AITask[]
 
   @@map("workspaces")
@@ -170,6 +184,7 @@ model Product {
   workspace             Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   variants              ProductVariant[]
   creatives             Creative[]
+  orders                Order[]
 
   @@unique([workspaceId, sku])
   @@index([workspaceId, active])
@@ -268,6 +283,38 @@ model CreativeCopy {
   @@index([creativeId, createdAt])
   @@index([versionId])
   @@map("creative_copies")
+}
+
+// A manually-entered order (see Orders.tsx "Add Order" form). There is no
+// storefront/checkout yet, so every order today is created by hand by the
+// workspace owner -- productId is optional (SetNull on delete) so deleting a
+// product later never destroys the historical order record. See
+// COWORK_ADSGENIUS_REALDATA_PLAN.md.
+model Order {
+  id              String      @id @default(uuid())
+  workspaceId     String      @map("workspace_id")
+  productId       String?     @map("product_id")
+  customerName    String      @map("customer_name")
+  phone           String
+  wilaya          String
+  commune         String
+  address         String
+  productName     String      @map("product_name")
+  quantity        Int         @default(1)
+  price           Decimal     @db.Decimal(18, 2)
+  deliveryFee     Decimal     @default(0) @db.Decimal(18, 2) @map("delivery_fee")
+  total           Decimal     @db.Decimal(18, 2)
+  status          OrderStatus @default(PENDING_CONFIRMATION)
+  deliveryCompany String?     @map("delivery_company")
+  trackingNumber  String?     @map("tracking_number")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product         Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+  @@map("orders")
 }
 
 model AIPromptVersion {
