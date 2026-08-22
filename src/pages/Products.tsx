@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Search, Eye, Wand2, X, Package, Loader2, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Eye, Wand2, X, Package, Loader2, AlertTriangle, Link2, Check } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -23,6 +23,7 @@ export function Products() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: '',
     sku: '',
@@ -47,6 +48,21 @@ export function Products() {
   };
 
   useEffect(() => { loadProducts(); }, []);
+
+  // Copies the public, unauthenticated order-landing-page link for this product
+  // (see PublicOrderPage.tsx / App.tsx route "/order/:productId") so it can be
+  // pasted straight into a Facebook/Instagram/TikTok ad's destination URL.
+  const copyLandingLink = async (productId: string) => {
+    const link = `${window.location.origin}/order/${productId}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      window.prompt('Copy this link:', link);
+      return;
+    }
+    setCopiedId(productId);
+    setTimeout(() => setCopiedId(prev => (prev === productId ? null : prev)), 2000);
+  };
 
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -145,6 +161,13 @@ export function Products() {
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <Button variant="ghost" size="sm" onClick={() => navigate(`/products/${product.id}`)}><Eye className="w-4 h-4" /></Button>
+                        <Button
+                          variant="ghost" size="sm"
+                          title="Copy order landing page link (for Facebook/Instagram/TikTok ads)"
+                          onClick={() => copyLandingLink(product.id)}
+                        >
+                          {copiedId === product.id ? <Check className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
+                        </Button>
                         {product.aiAnalysis ? <Badge variant="success" className="text-xs">AI Analyzed</Badge> : <Button variant="secondary" size="sm"><Wand2 className="w-4 h-4 mr-1" /> Analyze</Button>}
                       </div>
                     </td>
