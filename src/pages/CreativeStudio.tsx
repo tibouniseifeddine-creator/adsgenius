@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Wand2, Image, Video, Copy, Check, Eye, X, Loader2, AlertTriangle, Layers } from 'lucide-react';
+import { Wand2, Image, Video, Copy, Check, Eye, X, Loader2, AlertTriangle, Layers, Sparkles } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
@@ -19,11 +19,15 @@ const STATUS_VARIANT: Record<Creative['status'], any> = {
 const emptyForm = {
   name: '', productId: '', type: 'image_ad' as Creative['type'], angle: '', hook: '',
   primaryText: '', headline: '', cta: '', url: '', status: 'draft' as Creative['status'],
+  language: 'ar' as 'ar' | 'fr' | 'en',
 };
 
-// This page is connected to the real backend (GET/POST /api/creatives) instead
-// of DemoContext's fake data. There is no AI generation yet, so creatives are
-// entered by hand via the "Add Creative" form -- same pattern as Orders/Products.
+// This page is connected to the real backend (GET/POST /api/creatives). Ad
+// copy (hook/headline/primaryText/cta) can either be typed in by hand or
+// generated with AI via POST /api/creatives/generate-copy (needs
+// ANTHROPIC_API_KEY configured on the server -- see the "Generate with AI"
+// button inside the Add Creative form below). Either way, nothing is saved
+// until the user reviews it and presses Save, same as Orders/Products.
 export function CreativeStudio() {
   const { t } = useLanguage();
   const [creatives, setCreatives] = useState<Creative[]>([]);
@@ -32,6 +36,8 @@ export function CreativeStudio() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'image' | 'video'>('all');
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -63,7 +69,40 @@ export function CreativeStudio() {
   const openAddModal = () => {
     setForm(emptyForm);
     setSaveError(null);
+    setGenerateError(null);
     setShowModal(true);
+  };
+
+  // Calls the AI copywriting endpoint (needs ANTHROPIC_API_KEY configured on
+  // the server) and fills the hook/headline/primaryText/cta fields with its
+  // suggestion. The user still reviews and can edit everything before Save --
+  // this never saves anything by itself.
+  const handleGenerate = async () => {
+    const productId = form.productId || undefined;
+    const productName = form.name.trim();
+    if (!productId && !productName) {
+      setGenerateError('Enter a product name or pick a product first.');
+      return;
+    }
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const { suggestion } = await apiFetch<{ suggestion: { hook: string; headline: string; primaryText: string; cta: string } }>(
+        '/api/creatives/generate-copy',
+        { body: { productId, productName: productId ? undefined : productName, angle: form.angle || undefined, language: form.language } }
+      );
+      setForm(prev => ({
+        ...prev,
+        hook: suggestion.hook || prev.hook,
+        headline: suggestion.headline || prev.headline,
+        primaryText: suggestion.primaryText || prev.primaryText,
+        cta: suggestion.cta || prev.cta,
+      }));
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : 'Failed to generate ad copy');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -214,6 +253,30 @@ export function CreativeStudio() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Angle</label>
                   <Input value={form.angle} onChange={e => setForm({ ...form, angle: e.target.value })} placeholder="e.g. Price / Urgency / Social proof" />
                 </div>
+                <div className="md:col-span-2 flex items-end gap-2 bg-blue-50/60 border border-blue-100 rounded-lg p-3">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">AI language</label>
+                    <select
+                      value={form.language}
+                      onChange={e => setForm({ ...form, language: e.target.value as 'ar' | 'fr' | 'en' })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="ar">العربية</option>
+                      <option value="fr">Français</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+                  <Button type="button" variant="secondary" disabled={generating} onClick={handleGenerate}>
+                    {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                    {generating ? 'Generating...' : 'Generate with AI'}
+                  </Button>
+                </div>
+                {generateError && (
+                  <div className="md:col-span-2 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    {generateError}
+                  </div>
+                )}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Hook</label>
                   <Input value={form.hook} onChange={e => setForm({ ...form, hook: e.target.value })} />
