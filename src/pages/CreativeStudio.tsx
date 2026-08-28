@@ -253,23 +253,30 @@ export function CreativeStudio() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Angle</label>
                   <Input value={form.angle} onChange={e => setForm({ ...form, angle: e.target.value })} placeholder="e.g. Price / Urgency / Social proof" />
                 </div>
-                <div className="md:col-span-2 flex items-end gap-2 bg-blue-50/60 border border-blue-100 rounded-lg p-3">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">AI language</label>
-                    <select
-                      value={form.language}
-                      onChange={e => setForm({ ...form, language: e.target.value as 'ar' | 'fr' | 'en' })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    >
-                      <option value="ar">العربية</option>
-                      <option value="fr">Français</option>
-                      <option value="en">English</option>
-                    </select>
+                <div className="md:col-span-2 bg-blue-50/60 border border-blue-100 rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    Generate the Hook, Headline, Primary text &amp; CTA below with AI
+                  </p>
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-500 mb-1">Language for the AI text</label>
+                      <select
+                        value={form.language}
+                        onChange={e => setForm({ ...form, language: e.target.value as 'ar' | 'fr' | 'en' })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="ar">العربية</option>
+                        <option value="fr">Français</option>
+                        <option value="en">English</option>
+                      </select>
+                    </div>
+                    <Button type="button" variant="secondary" disabled={generating} onClick={handleGenerate} className="w-full sm:w-auto">
+                      {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                      {generating ? 'Generating...' : 'Generate with AI'}
+                    </Button>
                   </div>
-                  <Button type="button" variant="secondary" disabled={generating} onClick={handleGenerate}>
-                    {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                    {generating ? 'Generating...' : 'Generate with AI'}
-                  </Button>
+                  <p className="text-xs text-gray-500">Uses the product name/selection and angle above. You can still edit everything it fills in.</p>
                 </div>
                 {generateError && (
                   <div className="md:col-span-2 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
