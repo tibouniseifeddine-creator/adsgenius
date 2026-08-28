@@ -245,3 +245,65 @@ export interface RuleCondition {
   operator: '>' | '<' | '=' | '>=' | '<=';
   value: number;
 }
+
+// ---- AI Creative Pack Engine (Creative Studio "Generate Campaign" flow) ----
+// Deliberately named "CreativePack", not "Campaign" -- Campaign above already
+// means a real Meta ad campaign (objective/destination/budget). A creative
+// pack is the AI-generated bundle of hook/copy/visual concepts for one
+// product; a user later hand-picks concepts into an actual Campaign.
+export interface CreativePackAnalysis {
+  productType: string;
+  keyFeatures: string[];
+  colors: string[];
+  design: string;
+  likelyUse: string;
+  likelyAudience: string;
+  valueProposition: string;
+  benefits: string[];
+  painPoints: string[];
+  objections: string[];
+  assumptions: string[];
+}
+
+export interface CreativePackStrategy {
+  recommendedAngles: string[];
+  targetAudience: string;
+  recommendedPlatform: string;
+  recommendedObjective: string;
+  rationale: string;
+}
+
+export interface CreativePackConceptItem {
+  id: string;
+  index: number;
+  angle: string;
+  hook: string;
+  primaryText: string;
+  headline: string;
+  cta: string;
+  visualConcept: string;
+  targetAudience: string;
+  imageUrl?: string;
+  imageStatus: 'pending' | 'generating' | 'ready' | 'failed';
+  imageError?: string;
+}
+
+export interface CreativePackItem {
+  id: string;
+  productName: string;
+  productImageUrl?: string;
+  category?: string;
+  targetAudience?: string;
+  country?: string;
+  language: 'ar' | 'fr' | 'en';
+  sellingPrice?: number;
+  currency?: string;
+  mainBenefit?: string;
+  websiteUrl?: string;
+  analysis?: CreativePackAnalysis;
+  strategy?: CreativePackStrategy;
+  status: 'draft' | 'saved';
+  createdAt: string;
+  updatedAt: string;
+  concepts: CreativePackConceptItem[];
+}
