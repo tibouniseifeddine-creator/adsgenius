@@ -53,6 +53,18 @@ enum AITaskStatus {
   FAILED
 }
 
+enum CreativePackStatus {
+  DRAFT
+  SAVED
+}
+
+enum CreativePackConceptImageStatus {
+  PENDING
+  GENERATING
+  READY
+  FAILED
+}
+
 enum OrderStatus {
   NEW
   PENDING_CONFIRMATION
@@ -107,6 +119,7 @@ model Workspace {
   creatives          Creative[]
   orders             Order[]
   aiTasks            AITask[]
+  creativePacks      CreativePack[]
 
   @@map("workspaces")
 }
@@ -325,6 +338,65 @@ model Order {
   @@index([workspaceId, status])
   @@index([workspaceId, createdAt])
   @@map("orders")
+}
+
+// AI Creative Pack Engine: a user uploads one product photo + a name and
+// gets back a full "creative pack" (analysis, strategy, several distinct
+// hook/copy/visual concepts, optionally an AI-generated image per concept).
+// Deliberately not named "Campaign" -- see the Campaign interface note in
+// src/types/index.ts for why (a real Meta ad campaign is a separate future
+// concept).
+model CreativePack {
+  id              String            @id @default(uuid())
+  workspaceId     String            @map("workspace_id")
+  productName     String            @map("product_name")
+  // Either a Vercel Blob https URL (when BLOB_READ_WRITE_TOKEN is configured)
+  // or a raw "data:image/...;base64,..." string (graceful fallback so the
+  // whole feature works with zero extra setup) -- see storeImage() in api/index.ts.
+  productImageUrl String?           @map("product_image_url")
+  category        String?
+  targetAudience  String?           @map("target_audience")
+  country         String?
+  language        String            @default("ar")
+  sellingPrice    Decimal?          @db.Decimal(18, 2) @map("selling_price")
+  currency        String?           @db.VarChar(3)
+  mainBenefit     String?           @map("main_benefit")
+  websiteUrl      String?           @map("website_url")
+  analysis        Json?
+  strategy        Json?
+  status          CreativePackStatus    @default(DRAFT)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  concepts        CreativePackConcept[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+  @@map("creative_packs")
+}
+
+model CreativePackConcept {
+  id             String                         @id @default(uuid())
+  creativePackId String                         @map("creative_pack_id")
+  index          Int
+  angle          String
+  hook           String?
+  primaryText    String?                        @map("primary_text")
+  headline       String?
+  cta            String?
+  visualConcept  String?                        @map("visual_concept")
+  targetAudience String?                        @map("target_audience")
+  // Same either-Blob-URL-or-inline-base64 convention as CreativePack.productImageUrl.
+  imageUrl       String?                        @map("image_url")
+  imageStatus    CreativePackConceptImageStatus @default(PENDING) @map("image_status")
+  imageError     String?                        @map("image_error")
+  createdAt      DateTime                       @default(now()) @map("created_at")
+  updatedAt      DateTime                       @updatedAt @map("updated_at")
+  creativePack   CreativePack                   @relation(fields: [creativePackId], references: [id], onDelete: Cascade)
+
+  @@unique([creativePackId, index])
+  @@index([creativePackId])
+  @@map("creative_pack_concepts")
 }
 
 model AIPromptVersion {
