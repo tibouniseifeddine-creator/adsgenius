@@ -118,6 +118,7 @@ export interface Audience {
   location: string[];
   interests: string[];
   explanation: string;
+  source?: 'manual' | 'ai';
 }
 
 export interface Campaign {
