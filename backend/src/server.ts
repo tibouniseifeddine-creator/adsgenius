@@ -419,7 +419,6 @@ app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to generate ad copy' });
   }
 });
-
 // ==================================================================================
 // ---- AI Creative Pack Engine (product photo + name -> full creative pack) ----
 // ==================================================================================
@@ -959,6 +958,174 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/add-to-creative', requireA
     return res.status(500).json({ error: 'Failed to add to creatives' });
   }
 });
+// ==================================================================================
+// ---- Audience Lab (targeting profiles: manual entry + AI suggestions) ----
+// ==================================================================================
+// Audiences are lightweight, reusable targeting profiles (age/gender/location/
+// interests) a media buyer keeps around and later copies into Meta Ads Manager
+// when building a real campaign -- there is no in-app Campaign builder wired to
+// real data yet (Campaign in src/types/index.ts is still a future feature), so
+// "using" an audience here means copying its targeting summary from the UI, not
+// attaching it to anything else in this app.
+
+const AUDIENCE_GENDERS = new Set(['male', 'female', 'all']);
+
+function toApiAudience(a: {
+  id: string; name: string; ageMin: number; ageMax: number; gender: string;
+  location: string[]; interests: string[]; explanation: string | null; source: string;
+}) {
+  return {
+    id: a.id, name: a.name, ageMin: a.ageMin, ageMax: a.ageMax, gender: a.gender,
+    location: a.location, interests: a.interests, explanation: a.explanation ?? '',
+    source: a.source.toLowerCase()
+  };
+}
+
+app.get('/api/audiences', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.json({ audiences: [] });
+    const rows = await db.audience.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    return res.json({ audiences: rows.map(toApiAudience) });
+  } catch (error) {
+    console.error('List audiences failed:', error);
+    return res.status(500).json({ error: 'Failed to load audiences' });
+  }
+});
+
+// Manual entry, mirrors POST /api/creatives' hand-entry pattern.
+app.post('/api/audiences', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const ageMin = Number(body.ageMin);
+    const ageMax = Number(body.ageMax);
+    if (!name || !Number.isFinite(ageMin) || !Number.isFinite(ageMax) || ageMin < 13 || ageMax < ageMin) {
+      return res.status(400).json({ error: 'name, ageMin and ageMax (ageMax >= ageMin >= 13) are required' });
+    }
+    const genderInput = typeof body.gender === 'string' ? body.gender.trim().toLowerCase() : 'all';
+    const gender = AUDIENCE_GENDERS.has(genderInput) ? genderInput : 'all';
+    const location = Array.isArray(body.location) ? (body.location as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim() !== '').map(v => v.trim()) : [];
+    const interests = Array.isArray(body.interests) ? (body.interests as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim() !== '').map(v => v.trim()) : [];
+    const explanation = typeof body.explanation === 'string' && body.explanation.trim() ? body.explanation.trim() : null;
+    const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+    if (productId) {
+      const product = await db.product.findFirst({ where: { id: productId, workspaceId } });
+      if (!product) return res.status(400).json({ error: 'Product not found' });
+    }
+
+    const created = await db.audience.create({
+      data: { workspaceId, productId, name, ageMin: Math.round(ageMin), ageMax: Math.round(ageMax), gender, location, interests, explanation, source: 'MANUAL' as any }
+    });
+    return res.status(201).json({ audience: toApiAudience(created) });
+  } catch (error) {
+    console.error('Create audience failed:', error);
+    return res.status(500).json({ error: 'Failed to create audience' });
+  }
+});
+
+app.delete('/api/audiences/:id', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(404).json({ error: 'Audience not found' });
+    const existing = await db.audience.findFirst({ where: { id: req.params.id, workspaceId } });
+    if (!existing) return res.status(404).json({ error: 'Audience not found' });
+    await db.audience.delete({ where: { id: existing.id } });
+    return res.status(204).end();
+  } catch (error) {
+    console.error('Delete audience failed:', error);
+    return res.status(500).json({ error: 'Failed to delete audience' });
+  }
+});
+
+// AI-suggested audiences: given a product (by id, or freehand name/description),
+// ask Claude for 2-3 genuinely different candidate targeting profiles and
+// persist them immediately (source AI) -- same "just works with the existing
+// ANTHROPIC_API_KEY" approach as the AI Creative Pack Engine above.
+async function generateAudiencesWithAI(input: {
+  productName: string; description?: string; category?: string; country?: string; language: 'ar' | 'fr' | 'en';
+}): Promise<Array<{ name: string; ageMin: number; ageMax: number; gender: string; location: string[]; interests: string[]; explanation: string }>> {
+  const languageName = aiLanguageName(input.language);
+  const system = `You are an expert Meta (Facebook/Instagram) ads media buyer targeting online shoppers in Algeria and nearby markets. Given a product, propose 2 to 3 GENUINELY DIFFERENT candidate audiences to test (different age range, or gender, or interest focus -- not the same audience reworded). Write "name" and "explanation" in ${languageName}; "location" and "interests" as short English/French Meta-interest-style keywords a media buyer would recognize. Respond with ONLY raw JSON (no markdown fences, no commentary): a JSON array of 2 to 3 objects shaped as:
+{"name":string (short label, e.g. "Young urban professionals"),"ageMin":number,"ageMax":number,"gender":"male"|"female"|"all","location":string[] (1-3 short location/region names),"interests":string[] (2-5 short interest keywords, or empty array for a deliberately broad/no-interest audience),"explanation":string (1-2 sentences on why this audience is worth testing for this product)}`;
+
+  const userText = [
+    `Product: ${input.productName}`,
+    input.category ? `Category: ${input.category}` : null,
+    input.description ? `Description: ${input.description}` : null,
+    input.country ? `Target market/country: ${input.country}` : null
+  ].filter(Boolean).join('\n');
+
+  const result = await callClaudeForJSON(system, userText, 1200);
+  const list: any[] = Array.isArray(result) ? result : Array.isArray(result?.audiences) ? result.audiences : [];
+  return list.slice(0, 3).map(a => ({
+    name: typeof a?.name === 'string' && a.name.trim() ? a.name.trim() : 'Suggested audience',
+    ageMin: Number.isFinite(Number(a?.ageMin)) ? Math.max(13, Math.round(Number(a.ageMin))) : 18,
+    ageMax: Number.isFinite(Number(a?.ageMax)) ? Math.round(Number(a.ageMax)) : 45,
+    gender: AUDIENCE_GENDERS.has(String(a?.gender).toLowerCase()) ? String(a.gender).toLowerCase() : 'all',
+    location: Array.isArray(a?.location) ? a.location.filter((v: unknown) => typeof v === 'string') : [],
+    interests: Array.isArray(a?.interests) ? a.interests.filter((v: unknown) => typeof v === 'string') : [],
+    explanation: typeof a?.explanation === 'string' ? a.explanation.trim() : ''
+  }));
+}
+
+app.post('/api/audiences/generate', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const userId = (req as any).userId as string;
+    const workspaceId = await getUserWorkspaceId(db, userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const language = body.language === 'fr' || body.language === 'en' ? body.language : 'ar';
+    let productId: string | null = null;
+    let productName: string;
+    let description: string | undefined;
+    let category: string | undefined;
+
+    const bodyProductId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+    if (bodyProductId) {
+      const product = await db.product.findFirst({ where: { id: bodyProductId, workspaceId } });
+      if (!product) return res.status(400).json({ error: 'Product not found' });
+      productId = product.id;
+      productName = product.name;
+      description = product.description || undefined;
+      category = product.category ?? undefined;
+    } else {
+      productName = typeof body.productName === 'string' ? body.productName.trim() : '';
+      if (!productName) return res.status(400).json({ error: 'productId or productName is required' });
+      description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : undefined;
+      category = typeof body.category === 'string' && body.category.trim() ? body.category.trim() : undefined;
+    }
+    const country = typeof body.country === 'string' && body.country.trim() ? body.country.trim() : undefined;
+
+    let suggestions;
+    try {
+      suggestions = await generateAudiencesWithAI({ productName, description, category, country, language: language as any });
+      await logAiTask(db, { workspaceId, userId, capability: 'audience_generate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language } });
+    } catch (err: any) {
+      await logAiTask(db, { workspaceId, userId, capability: 'audience_generate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { productName, category, language }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
+      throw err;
+    }
+
+    const created = await db.$transaction(
+      suggestions.map(s => db.audience.create({
+        data: { workspaceId, productId, name: s.name, ageMin: s.ageMin, ageMax: s.ageMax, gender: s.gender, location: s.location, interests: s.interests, explanation: s.explanation, source: 'AI' as any }
+      }))
+    );
+    return res.status(201).json({ audiences: created.map(toApiAudience) });
+  } catch (error: any) {
+    console.error('Generate audiences failed:', error);
+    const status = typeof error?.status === 'number' ? error.status : 500;
+    return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to generate audiences' });
+  }
+});
 
 // Translates the DB's Order row into the shape src/types/index.ts already expects
 // (businessId naming, orderDate as an ISO string, status lowercased since the
@@ -1115,6 +1282,186 @@ app.patch('/api/orders/:id', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('Update order failed:', error);
     return res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
+// ==================================================================================
+// ---- Delivery integration: ZR Express (Procolis) ----
+// ==================================================================================
+// Real courier integration for Algeria. Needs ZR_EXPRESS_TOKEN and
+// ZR_EXPRESS_KEY (from the ZR Express / Procolis dashboard) set in the
+// environment; without them every call below returns a clear 501 instead of
+// silently failing. Field names/endpoints follow ZR's own "Procolis" API as
+// best documented publicly -- GET /api/delivery/zr-express/test exists
+// specifically so this can be verified against a real account BEFORE shipping
+// any real order through it. If a real shipment call ever fails, the raw ZR
+// response text is returned (not swallowed) so the exact field/endpoint can be
+// corrected quickly against what ZR actually replies.
+
+const ZR_EXPRESS_BASE_URL = 'https://procolis.com/api_v1';
+
+// Algeria's 58 wilayas with their official numeric codes, used to translate the
+// free-text wilaya on an order into the numeric IDWilaya ZR's API requires.
+// Matching below is diacritic/case-insensitive with a loose prefix fallback.
+const ALGERIA_WILAYAS: Array<{ code: number; name: string }> = [
+  { code: 1, name: 'Adrar' }, { code: 2, name: 'Chlef' }, { code: 3, name: 'Laghouat' },
+  { code: 4, name: 'Oum El Bouaghi' }, { code: 5, name: 'Batna' }, { code: 6, name: 'Bejaia' },
+  { code: 7, name: 'Biskra' }, { code: 8, name: 'Bechar' }, { code: 9, name: 'Blida' },
+  { code: 10, name: 'Bouira' }, { code: 11, name: 'Tamanrasset' }, { code: 12, name: 'Tebessa' },
+  { code: 13, name: 'Tlemcen' }, { code: 14, name: 'Tiaret' }, { code: 15, name: 'Tizi Ouzou' },
+  { code: 16, name: 'Alger' }, { code: 17, name: 'Djelfa' }, { code: 18, name: 'Jijel' },
+  { code: 19, name: 'Setif' }, { code: 20, name: 'Saida' }, { code: 21, name: 'Skikda' },
+  { code: 22, name: 'Sidi Bel Abbes' }, { code: 23, name: 'Annaba' }, { code: 24, name: 'Guelma' },
+  { code: 25, name: 'Constantine' }, { code: 26, name: 'Medea' }, { code: 27, name: 'Mostaganem' },
+  { code: 28, name: "M'Sila" }, { code: 29, name: 'Mascara' }, { code: 30, name: 'Ouargla' },
+  { code: 31, name: 'Oran' }, { code: 32, name: 'El Bayadh' }, { code: 33, name: 'Illizi' },
+  { code: 34, name: 'Bordj Bou Arreridj' }, { code: 35, name: 'Boumerdes' }, { code: 36, name: 'El Tarf' },
+  { code: 37, name: 'Tindouf' }, { code: 38, name: 'Tissemsilt' }, { code: 39, name: 'El Oued' },
+  { code: 40, name: 'Khenchela' }, { code: 41, name: 'Souk Ahras' }, { code: 42, name: 'Tipaza' },
+  { code: 43, name: 'Mila' }, { code: 44, name: 'Ain Defla' }, { code: 45, name: 'Naama' },
+  { code: 46, name: 'Ain Temouchent' }, { code: 47, name: 'Ghardaia' }, { code: 48, name: 'Relizane' },
+  { code: 49, name: 'Timimoun' }, { code: 50, name: 'Bordj Badji Mokhtar' }, { code: 51, name: 'Ouled Djellal' },
+  { code: 52, name: 'Beni Abbes' }, { code: 53, name: 'In Salah' }, { code: 54, name: 'In Guezzam' },
+  { code: 55, name: 'Touggourt' }, { code: 56, name: 'Djanet' }, { code: 57, name: "El M'Ghair" },
+  { code: 58, name: 'El Meniaa' }
+];
+
+function normalizeWilayaText(value: string): string {
+  return value.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+}
+
+function findWilayaCode(wilaya: string): number | null {
+  const needle = normalizeWilayaText(wilaya);
+  if (!needle) return null;
+  const exact = ALGERIA_WILAYAS.find(w => normalizeWilayaText(w.name) === needle);
+  if (exact) return exact.code;
+  const prefix = ALGERIA_WILAYAS.find(w => needle.startsWith(normalizeWilayaText(w.name)) || normalizeWilayaText(w.name).startsWith(needle));
+  return prefix ? prefix.code : null;
+}
+
+function zrExpressCredentials(): { token: string; key: string } {
+  const token = process.env.ZR_EXPRESS_TOKEN?.trim();
+  const key = process.env.ZR_EXPRESS_KEY?.trim();
+  if (!token || !key) {
+    throw Object.assign(new Error('ZR Express is not configured yet (missing ZR_EXPRESS_TOKEN / ZR_EXPRESS_KEY)'), { status: 501 });
+  }
+  return { token, key };
+}
+
+async function zrExpressRequest(path: string, method: 'GET' | 'POST', body?: unknown): Promise<any> {
+  const { token, key } = zrExpressCredentials();
+  const response = await fetch(`${ZR_EXPRESS_BASE_URL}${path}`, {
+    method,
+    headers: { 'content-type': 'application/json', token, key },
+    body: body !== undefined ? JSON.stringify(body) : undefined
+  });
+  const raw = await response.text();
+  let parsed: any = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch { /* ZR sometimes returns plain text -- surfaced as-is below */ }
+  if (!response.ok) {
+    throw Object.assign(new Error(`ZR Express request failed (${response.status}): ${raw.slice(0, 500)}`), { status: 502 });
+  }
+  return parsed ?? raw;
+}
+
+// Verifies ZR_EXPRESS_TOKEN/ZR_EXPRESS_KEY actually work, with no side effects.
+// Meant to be tried from the Orders page before ever shipping a real order.
+app.get('/api/delivery/zr-express/test', requireAuth, async (_req, res) => {
+  try {
+    const result = await zrExpressRequest('/token', 'GET');
+    return res.json({ ok: true, result });
+  } catch (error: any) {
+    const status = typeof error?.status === 'number' ? error.status : 500;
+    return res.status(status).json({ ok: false, error: error instanceof Error ? error.message : 'ZR Express test failed' });
+  }
+});
+
+// Creates a real ZR Express shipment for one order and stores the returned
+// tracking number. Only allowed once an order has actually been confirmed by
+// phone (same reasoning as PRINTABLE_STATUSES in Orders.tsx) so a
+// still-unconfirmed lead never turns into a real parcel.
+const SHIPPABLE_ORDER_STATUSES = new Set(['CONFIRMED', 'PREPARING']);
+
+app.post('/api/orders/:id/ship', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const userId = (req as any).userId as string;
+    const workspaceId = await getUserWorkspaceId(db, userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const order = await db.order.findFirst({ where: { id: req.params.id, workspaceId } });
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!SHIPPABLE_ORDER_STATUSES.has(order.status)) {
+      return res.status(400).json({ error: 'Only confirmed orders can be shipped -- confirm the order first' });
+    }
+    if (order.trackingNumber) {
+      return res.status(400).json({ error: `Already shipped (tracking ${order.trackingNumber})` });
+    }
+
+    const wilayaCode = findWilayaCode(order.wilaya);
+    if (!wilayaCode) {
+      return res.status(400).json({ error: `Could not match wilaya "${order.wilaya}" to a known Algeria wilaya -- please correct it on the order first` });
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const deliveryType = body.deliveryType === 'stopdesk' ? '1' : '0';
+
+    let zrResult: any;
+    try {
+      zrResult = await zrExpressRequest('/add_colis', 'POST', {
+        Colis: [{
+          Tracking: '',
+          TypeLivraison: deliveryType,
+          TypeColis: '0',
+          Confrimee: '',
+          Client: order.customerName,
+          MobileA: order.phone,
+          MobileB: '',
+          Adresse: order.address || order.commune || order.wilaya,
+          IDWilaya: String(wilayaCode),
+          Commune: order.commune || order.wilaya,
+          Total: String(Math.round(Number(order.total))),
+          Note: '',
+          TProduit: order.productName,
+          id_Externe: order.id,
+          Source: 'AdsGenius'
+        }]
+      });
+    } catch (err: any) {
+      await db.auditLog.create({
+        data: {
+          workspaceId, userId, action: 'order.ship.zr_express_failed', entityType: 'Order', entityId: order.id,
+          afterJson: { error: err instanceof Error ? err.message : 'unknown error' } as any
+        }
+      }).catch(() => {});
+      const status = typeof err?.status === 'number' ? err.status : 500;
+      return res.status(status).json({ error: err instanceof Error ? err.message : 'Failed to create ZR Express shipment' });
+    }
+
+    // ZR's response shape for add_colis isn't perfectly consistent across
+    // accounts -- try the couple of shapes seen in the wild before falling
+    // back to our own order id so the order is still correctly marked shipped.
+    const returnedTracking =
+      zrResult?.Colis?.[0]?.Tracking ||
+      zrResult?.[0]?.Tracking ||
+      zrResult?.Tracking ||
+      null;
+
+    const updated = await db.order.update({
+      where: { id: order.id },
+      data: { deliveryCompany: 'ZR Express', trackingNumber: returnedTracking || order.id, status: 'SHIPPED' as any }
+    });
+    await db.auditLog.create({
+      data: {
+        workspaceId, userId, action: 'order.ship.zr_express', entityType: 'Order', entityId: order.id,
+        afterJson: { trackingNumber: updated.trackingNumber, raw: zrResult } as any
+      }
+    }).catch(() => {});
+
+    return res.json({ order: toApiOrder(updated), zrResponse: zrResult });
+  } catch (error) {
+    console.error('Ship order failed:', error);
+    return res.status(500).json({ error: 'Failed to ship order' });
   }
 });
 
