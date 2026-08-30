@@ -4,10 +4,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 
-// Vercel serverless entrypoint.
-// Keep the production handler self-contained so @vercel/node bundles the TypeScript
-// implementation instead of loading backend/src/server.ts as raw CommonJS.
-const app = express();
+export const app = express();
+const port = Number(process.env.PORT ?? 4000);
 let prisma: PrismaClient | null = null;
 
 function getPrisma(): PrismaClient {
@@ -1545,5 +1543,10 @@ app.post('/api/public/orders', async (req, res) => {
     return res.status(500).json({ error: 'Failed to submit order' });
   }
 });
+
+
+if (!process.env.VERCEL) {
+  app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
+}
 
 export default app;
