@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Phone, MessageCircle, CheckCircle, XCircle, Truck, Pencil, Printer, X, ClipboardList, Loader2, AlertTriangle } from 'lucide-react';
+import { Plus, Phone, MessageCircle, CheckCircle, XCircle, Truck, Pencil, Printer, X, ClipboardList, Loader2, AlertTriangle, PackageCheck, Wifi } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
@@ -7,6 +7,25 @@ import { Badge } from '../components/ui/Badge';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Order, OrderStatus, Product } from '../types';
 import { apiFetch } from '../lib/api';
+
+// Algeria's 58 wilayas -- kept in sync with ALGERIA_WILAYAS in the backend
+// (api/index.ts / backend/src/server.ts) so a wilaya picked here always
+// matches a numeric IDWilaya the ZR Express integration can resolve.
+const ALGERIA_WILAYAS = [
+  'Adrar', 'Chlef', 'Laghouat', 'Oum El Bouaghi', 'Batna', 'Bejaia', 'Biskra', 'Bechar', 'Blida',
+  'Bouira', 'Tamanrasset', 'Tebessa', 'Tlemcen', 'Tiaret', 'Tizi Ouzou', 'Alger', 'Djelfa', 'Jijel',
+  'Setif', 'Saida', 'Skikda', 'Sidi Bel Abbes', 'Annaba', 'Guelma', 'Constantine', 'Medea', 'Mostaganem',
+  "M'Sila", 'Mascara', 'Ouargla', 'Oran', 'El Bayadh', 'Illizi', 'Bordj Bou Arreridj', 'Boumerdes',
+  'El Tarf', 'Tindouf', 'Tissemsilt', 'El Oued', 'Khenchela', 'Souk Ahras', 'Tipaza', 'Mila', 'Ain Defla',
+  'Naama', 'Ain Temouchent', 'Ghardaia', 'Relizane', 'Timimoun', 'Bordj Badji Mokhtar', 'Ouled Djellal',
+  'Beni Abbes', 'In Salah', 'In Guezzam', 'Touggourt', 'Djanet', "El M'Ghair", 'El Meniaa'
+];
+
+// Real shipments can only be created once a lead has actually been confirmed
+// by phone -- mirrors SHIPPABLE_ORDER_STATUSES on the backend, kept here only
+// so the "Ship via ZR Express" button doesn't flash on rows the API would
+// reject anyway.
+const SHIPPABLE_STATUSES = new Set<OrderStatus>(['confirmed', 'preparing']);
 
 const statusColors: Record<OrderStatus, any> = {
   new: 'default', pending_confirmation: 'warning', confirmed: 'info',
@@ -68,6 +87,10 @@ export function Orders() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [shippingId, setShippingId] = useState<string | null>(null);
+  const [shipError, setShipError] = useState<string | null>(null);
+  const [testingZr, setTestingZr] = useState(false);
+  const [zrTestResult, setZrTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const loadOrders = () => {
     setLoading(true);
@@ -100,6 +123,37 @@ export function Orders() {
       setLoadError(e instanceof Error ? e.message : 'Failed to update order status');
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  // Verifies ZR_EXPRESS_TOKEN / ZR_EXPRESS_KEY are set up correctly. This has
+  // zero side effects on ZR's side -- it's meant to be tried before the first
+  // real shipment, since the exact ZR field/endpoint names in this build are
+  // based on publicly documented behavior and haven't been confirmed against
+  // a live ZR account yet.
+  const testZrExpress = async () => {
+    setTestingZr(true);
+    setZrTestResult(null);
+    try {
+      await apiFetch('/api/delivery/zr-express/test');
+      setZrTestResult({ ok: true, message: 'Connected -- ZR Express credentials work.' });
+    } catch (e) {
+      setZrTestResult({ ok: false, message: e instanceof Error ? e.message : 'ZR Express test failed' });
+    } finally {
+      setTestingZr(false);
+    }
+  };
+
+  const shipOrder = async (order: Order) => {
+    setShippingId(order.id);
+    setShipError(null);
+    try {
+      const { order: updated } = await apiFetch<{ order: Order }>(`/api/orders/${order.id}/ship`, { body: {} });
+      setOrders(prev => prev.map(o => (o.id === order.id ? updated : o)));
+    } catch (e) {
+      setShipError(e instanceof Error ? e.message : 'Failed to ship order via ZR Express');
+    } finally {
+      setShippingId(null);
     }
   };
 
@@ -200,6 +254,8 @@ export function Orders() {
       ['Delivery Fee', `${order.deliveryFee.toLocaleString()} DZD`],
       ['Total', `${order.total.toLocaleString()} DZD`],
       ['Status', order.status],
+      ...(order.deliveryCompany ? [['Delivery Company', order.deliveryCompany] as [string, string]] : []),
+      ...(order.trackingNumber ? [['Tracking Number', order.trackingNumber] as [string, string]] : []),
     ];
     const rowsHtml = rows.map(([label, value]) => `
       <tr>
@@ -232,10 +288,28 @@ export function Orders() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">{t('orders')}</h1>
-        <Button onClick={openAddModal}><Plus className="w-4 h-4 mr-2" />Add Order</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={testZrExpress} disabled={testingZr}>
+            {testingZr ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Wifi className="w-4 h-4 mr-2" />}
+            Test ZR Express Connection
+          </Button>
+          <Button onClick={openAddModal}><Plus className="w-4 h-4 mr-2" />Add Order</Button>
+        </div>
       </div>
+      {zrTestResult && (
+        <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 border ${zrTestResult.ok ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+          {zrTestResult.ok ? <CheckCircle className="w-4 h-4 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
+          {zrTestResult.message}
+        </div>
+      )}
+      {shipError && (
+        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {shipError}
+        </div>
+      )}
       <Card>
         <div className="flex gap-4 mb-4">
           <Input placeholder={t('searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} className="max-w-md" />
@@ -282,7 +356,12 @@ export function Orders() {
                       <p className="text-xs text-gray-500">{order.phone}</p>
                     </td>
                     <td className="px-4 py-3 text-gray-500">{order.wilaya}</td>
-                    <td className="px-4 py-3 text-gray-500">{order.productName}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {order.productName}
+                      {order.trackingNumber && (
+                        <p className="text-xs text-gray-400">{order.deliveryCompany || 'Shipped'}: {order.trackingNumber}</p>
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-medium">{order.total.toLocaleString()} DZD</td>
                     <td className="px-4 py-3"><Badge variant={statusColors[order.status]}>{t(order.status as any)}</Badge></td>
                     <td className="px-4 py-3">
@@ -292,6 +371,15 @@ export function Orders() {
                             <Button variant="success" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'confirmed')}><CheckCircle className="w-3 h-3" /></Button>
                             <Button variant="danger" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'cancelled')}><XCircle className="w-3 h-3" /></Button>
                           </>
+                        )}
+                        {SHIPPABLE_STATUSES.has(order.status) && !order.trackingNumber && (
+                          <Button
+                            variant="secondary" size="sm" title="Ship via ZR Express"
+                            disabled={shippingId === order.id}
+                            onClick={() => shipOrder(order)}
+                          >
+                            {shippingId === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
+                          </Button>
                         )}
                         {order.status === 'confirmed' && (
                           <Button variant="secondary" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'shipped')}><Truck className="w-3 h-3" /></Button>
@@ -354,7 +442,17 @@ export function Orders() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('wilaya')} *</label>
-                  <Input value={form.wilaya} onChange={e => setForm({ ...form, wilaya: e.target.value })} required />
+                  {/* A select (not free text) so the value always matches a wilaya ZR
+                      Express's numeric IDWilaya can be resolved from -- see ALGERIA_WILAYAS. */}
+                  <select
+                    value={form.wilaya}
+                    onChange={e => setForm({ ...form, wilaya: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select a wilaya...</option>
+                    {ALGERIA_WILAYAS.map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('commune')}</label>
