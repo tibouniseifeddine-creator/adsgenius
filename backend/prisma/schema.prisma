@@ -58,6 +58,11 @@ enum CreativePackStatus {
   SAVED
 }
 
+enum AudienceSource {
+  MANUAL
+  AI
+}
+
 enum CreativePackConceptImageStatus {
   PENDING
   GENERATING
@@ -120,6 +125,7 @@ model Workspace {
   orders             Order[]
   aiTasks            AITask[]
   creativePacks      CreativePack[]
+  audiences          Audience[]
 
   @@map("workspaces")
 }
@@ -199,6 +205,7 @@ model Product {
   variants              ProductVariant[]
   creatives             Creative[]
   orders                Order[]
+  audiences             Audience[]
 
   @@unique([workspaceId, sku])
   @@index([workspaceId, active])
@@ -338,6 +345,34 @@ model Order {
   @@index([workspaceId, status])
   @@index([workspaceId, createdAt])
   @@map("orders")
+}
+
+// Audience Lab: a saved targeting profile (age/gender/location/interests) a
+// user can reuse when building a real Meta campaign later. Created either by
+// hand (MANUAL) or by asking AI to suggest 2-3 candidates from a product's
+// analysis (AI) -- see POST /api/audiences/generate in api/index.ts. Kept
+// intentionally simple/flat (no Campaign linkage yet) since Campaigns are
+// still a future feature -- see the Campaign interface note in
+// src/types/index.ts.
+model Audience {
+  id          String         @id @default(uuid())
+  workspaceId String         @map("workspace_id")
+  productId   String?        @map("product_id")
+  name        String
+  ageMin      Int            @map("age_min")
+  ageMax      Int            @map("age_max")
+  gender      String         @default("all")
+  location    String[]
+  interests   String[]
+  explanation String?
+  source      AudienceSource @default(MANUAL)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product     Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@map("audiences")
 }
 
 // AI Creative Pack Engine: a user uploads one product photo + a name and
