@@ -21,7 +21,13 @@ function getJwtSecret(): string {
   return secret;
 }
 
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN?.split(',') ?? true, credentials: true }));
+// Fail CLOSED (not open) when FRONTEND_ORIGIN isn't set: reflecting any
+// origin (the previous `?? true` fallback) would let any website make
+// credentialed requests against this API. `origin: false` disables
+// cross-origin access entirely until FRONTEND_ORIGIN is explicitly
+// configured -- verify it is set in every real deployment environment.
+const allowedOrigins = process.env.FRONTEND_ORIGIN?.split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors({ origin: allowedOrigins && allowedOrigins.length > 0 ? allowedOrigins : false, credentials: true }));
 // Raised from the default ~100kb so a product photo (sent as a base64 data
 // URL by the AI Creative Pack Engine, see /api/creative-packs/analyze below) fits.
 // Images are compressed client-side first, but this is the server-side
@@ -84,6 +90,37 @@ function rateLimited(res: express.Response, retryAfterSeconds: number) {
   return res.status(429).json({ error: 'Too many requests -- please try again shortly.' });
 }
 
+// Parses an optional numeric request-body field. Previously `Number(x) || 0`
+// silently turned typos/garbage input (e.g. "abc") into 0 instead of
+// rejecting it -- see audit finding P27. Omitting the field entirely still
+// defaults to 0 (unchanged behavior); only an actually-supplied, non-numeric
+// value is now rejected.
+function parseOptionalNumeric(value: unknown, fieldName: string): number {
+  if (value === undefined || value === null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw Object.assign(new Error(`${fieldName} must be a valid number`), { status: 400 });
+  }
+  return n;
+}
+
+// Same idea as parseOptionalNumeric but for quantity, which defaults to 1
+// (not 0) and must be a positive value when supplied.
+function parseOptionalQuantity(value: unknown): number {
+  if (value === undefined || value === null || value === '') return 1;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw Object.assign(new Error('quantity must be a positive number'), { status: 400 });
+  }
+  return Math.round(n);
+}
+
+// A syntactically valid bcrypt hash of an unknown/unused password, compared
+// against when no such user exists so bcrypt.compare always runs (see P24
+// fix at POST /api/auth/login below). This value is never a real password
+// hash and matches no possible input.
+const LOGIN_DUMMY_HASH = '$2b$12$CwTycUXWue0Thq9StjUM0uJ8vSdpS4dQi2AAdxxRs4hpMD9SkVLC.';
+
 const LOGIN_IP_LIMIT = { max: 20, windowMs: 15 * 60 * 1000 };
 const LOGIN_EMAIL_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
 const PUBLIC_ORDER_IP_LIMIT = { max: 10, windowMs: 10 * 60 * 1000 };
@@ -98,6 +135,12 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// Deliberately permissive (matches most real-world email addresses without
+// rejecting valid-but-unusual ones) -- just enough to reject registrations
+// like "not-an-email" that a stricter downstream system (Meta OAuth, an
+// email-delivery provider) would bounce anyway. See audit finding P25.
+const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     getJwtSecret();
@@ -107,6 +150,9 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'email, name, businessName and a password of at least 8 characters are required' });
     }
     const normalizedEmail = email.trim().toLowerCase();
+    if (!EMAIL_FORMAT_REGEX.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
     const exists = await db.user.findUnique({ where: { email: normalizedEmail } });
     if (exists) return res.status(409).json({ error: 'Email already registered' });
 
@@ -142,7 +188,13 @@ app.post('/api/auth/login', async (req, res) => {
       return rateLimited(res, 60);
     }
     const user = await db.user.findUnique({ where: { email: normalizedEmail } });
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: 'Invalid email or password' });
+    // Always run bcrypt.compare, even for an email that doesn't exist (against
+    // a fixed dummy hash), so response time doesn't leak whether an account
+    // exists -- see audit finding P24. bcrypt.compare's own timing is already
+    // constant-time for a given hash, so the previous short-circuit (skipping
+    // the compare entirely when !user) was the actual side channel.
+    const passwordValid = await bcrypt.compare(password, user?.passwordHash ?? LOGIN_DUMMY_HASH);
+    if (!user || !passwordValid) return res.status(401).json({ error: 'Invalid email or password' });
     return res.json({ user: await userResponse(user.id), token: tokenFor(user.id) });
   } catch (error) {
     console.error('Login failed:', error);
@@ -251,20 +303,21 @@ app.post('/api/products', requireAuth, async (req, res) => {
         description: typeof body.description === 'string' ? body.description : '',
         sku: typeof body.sku === 'string' && body.sku.trim() ? body.sku.trim() : null,
         category: typeof body.category === 'string' && body.category.trim() ? body.category.trim() : null,
-        baseCost: Number(body.purchaseCost) || 0,
+        baseCost: parseOptionalNumeric(body.purchaseCost, 'purchaseCost'),
         salePrice: sellingPrice,
         currency: 'DZD',
-        stock: Number(body.stock) || 0,
-        shippingCost: Number(body.deliveryCost) || 0,
-        packagingCost: Number(body.packagingCost) || 0,
-        expectedCancellationRate: Number(body.expectedCancellationRate) || 0,
-        expectedReturnRate: Number(body.expectedReturnRate) || 0
+        stock: parseOptionalNumeric(body.stock, 'stock'),
+        shippingCost: parseOptionalNumeric(body.deliveryCost, 'deliveryCost'),
+        packagingCost: parseOptionalNumeric(body.packagingCost, 'packagingCost'),
+        expectedCancellationRate: parseOptionalNumeric(body.expectedCancellationRate, 'expectedCancellationRate'),
+        expectedReturnRate: parseOptionalNumeric(body.expectedReturnRate, 'expectedReturnRate')
       }
     });
     return res.status(201).json({ product: toApiProduct(created) });
   } catch (error: any) {
     console.error('Create product failed:', error);
     if (error?.code === 'P2002') return res.status(409).json({ error: 'A product with this SKU already exists' });
+    if (typeof error?.status === 'number') return res.status(error.status).json({ error: error.message });
     return res.status(500).json({ error: 'Failed to create product' });
   }
 });
@@ -369,10 +422,30 @@ app.post('/api/creatives', requireAuth, async (req, res) => {
 // /api/creatives -- nothing is written to the database by this endpoint.
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL?.trim() || 'claude-3-5-haiku-latest';
 
+// Every outbound call to Anthropic/OpenAI goes through this so a stalled
+// upstream request is aborted well before Vercel's own hard function-timeout
+// kills it uncleanly -- see audit finding P17.
+const AI_REQUEST_TIMEOUT_MS = 55_000;
+
+async function fetchWithTimeout(url: string, init: Record<string, unknown>, timeoutMs = AI_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal } as any);
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw Object.assign(new Error('AI request timed out -- please try again'), { status: 504 });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function generateAdCopy(input: {
   productName: string; description?: string; category?: string; price?: number; currency?: string;
   angle?: string; language: 'ar' | 'fr' | 'en';
-}): Promise<{ hook: string; headline: string; primaryText: string; cta: string }> {
+}): Promise<{ suggestion: { hook: string; headline: string; primaryText: string; cta: string }; usage: { inputTokens: number; outputTokens: number } }> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     throw Object.assign(new Error('AI copywriting is not configured yet (missing ANTHROPIC_API_KEY)'), { status: 501 });
@@ -389,7 +462,7 @@ async function generateAdCopy(input: {
 
   const system = `You are an expert direct-response copywriter for Facebook/Instagram/TikTok ads selling to online shoppers in Algeria who pay cash-on-delivery. Write in ${languageName}. Respond with ONLY raw JSON (no markdown fences, no commentary) matching exactly this shape: {"hook": string, "headline": string, "primaryText": string, "cta": string}. "hook": a scroll-stopping opening line, under 15 words. "headline": a punchy value proposition, under 8 words. "primaryText": 2-4 short benefit-led sentences separated by line breaks, ending with a soft call to action. "cta": a short button label, 2-4 words.`;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -426,17 +499,24 @@ async function generateAdCopy(input: {
   }
 
   return {
-    hook: typeof parsed.hook === 'string' ? parsed.hook.trim() : '',
-    headline: typeof parsed.headline === 'string' ? parsed.headline.trim() : '',
-    primaryText: typeof parsed.primaryText === 'string' ? parsed.primaryText.trim() : '',
-    cta: typeof parsed.cta === 'string' ? parsed.cta.trim() : ''
+    suggestion: {
+      hook: typeof parsed.hook === 'string' ? parsed.hook.trim() : '',
+      headline: typeof parsed.headline === 'string' ? parsed.headline.trim() : '',
+      primaryText: typeof parsed.primaryText === 'string' ? parsed.primaryText.trim() : '',
+      cta: typeof parsed.cta === 'string' ? parsed.cta.trim() : ''
+    },
+    usage: {
+      inputTokens: Number(data?.usage?.input_tokens) || 0,
+      outputTokens: Number(data?.usage?.output_tokens) || 0
+    }
   };
 }
 
 app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
   try {
     const db = getPrisma();
-    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    const userId = (req as any).userId as string;
+    const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
@@ -465,7 +545,18 @@ app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
       description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : undefined;
     }
 
-    const suggestion = await generateAdCopy({ productName, description, category, price, currency, angle, language: language as 'ar' | 'fr' | 'en' });
+    // Logged to the AITask audit trail like every other AI-calling route --
+    // this was previously the one gap in that pattern (audit finding P16),
+    // and now also persists real token usage to AIUsage (P15).
+    let suggestion;
+    try {
+      const generated = await generateAdCopy({ productName, description, category, price, currency, angle, language: language as 'ar' | 'fr' | 'en' });
+      suggestion = generated.suggestion;
+      await logAiTask(db, { workspaceId, userId, capability: 'creative_generate_copy', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language }, usage: generated.usage });
+    } catch (err: any) {
+      await logAiTask(db, { workspaceId, userId, capability: 'creative_generate_copy', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { productName, category, language }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
+      throw err;
+    }
     return res.json({ suggestion });
   } catch (error: any) {
     console.error('Generate ad copy failed:', error);
@@ -535,9 +626,13 @@ async function loadImageBytes(source: string): Promise<{ buffer: Buffer; mediaTy
 async function logAiTask(db: PrismaClient, input: {
   workspaceId: string; userId?: string; capability: string; provider: 'ANTHROPIC' | 'OPENAI';
   model: string; status: 'SUCCEEDED' | 'FAILED'; inputJson: unknown; outputJson?: unknown; errorMessage?: string;
+  // Real token counts from the provider's own response, when the caller has
+  // them (only on SUCCEEDED calls) -- persisted to AIUsage, which existed in
+  // the schema but was never written to before. See audit finding P15.
+  usage?: { inputTokens: number; outputTokens: number };
 }) {
   try {
-    await db.aITask.create({
+    const task = await db.aITask.create({
       data: {
         workspaceId: input.workspaceId,
         userId: input.userId,
@@ -552,6 +647,11 @@ async function logAiTask(db: PrismaClient, input: {
         completedAt: new Date()
       }
     });
+    if (input.usage) {
+      await db.aIUsage.create({
+        data: { taskId: task.id, inputTokens: input.usage.inputTokens, outputTokens: input.usage.outputTokens }
+      });
+    }
   } catch (err) {
     console.error('Failed to log AITask (non-fatal):', err);
   }
@@ -560,12 +660,12 @@ async function logAiTask(db: PrismaClient, input: {
 // Shared Claude caller for every JSON-producing prompt below (analysis,
 // strategy, concepts, regeneration). Mirrors generateAdCopy()'s parsing
 // approach but also accepts multi-part (vision) content and top-level arrays.
-async function callClaudeForJSON(system: string, userContent: unknown, maxTokens: number): Promise<any> {
+async function callClaudeForJSON(system: string, userContent: unknown, maxTokens: number): Promise<{ result: any; usage: { inputTokens: number; outputTokens: number } }> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     throw Object.assign(new Error('AI is not configured yet (missing ANTHROPIC_API_KEY)'), { status: 501 });
   }
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content: userContent }] })
@@ -576,6 +676,7 @@ async function callClaudeForJSON(system: string, userContent: unknown, maxTokens
     throw Object.assign(new Error(`AI request failed (${response.status})`), { status: 502 });
   }
   const data = (await response.json()) as any;
+  const usage = { inputTokens: Number(data?.usage?.input_tokens) || 0, outputTokens: Number(data?.usage?.output_tokens) || 0 };
   const raw = ((data?.content ?? []) as any[]).map(block => (block?.type === 'text' ? block.text : '')).join('').trim();
   const objStart = raw.indexOf('{');
   const objEnd = raw.lastIndexOf('}');
@@ -592,7 +693,7 @@ async function callClaudeForJSON(system: string, userContent: unknown, maxTokens
     throw Object.assign(new Error('AI returned an unexpected response'), { status: 502 });
   }
   try {
-    return JSON.parse(raw.slice(start, end + 1));
+    return { result: JSON.parse(raw.slice(start, end + 1)), usage };
   } catch {
     throw Object.assign(new Error('AI returned an unexpected response'), { status: 502 });
   }
@@ -601,7 +702,7 @@ async function callClaudeForJSON(system: string, userContent: unknown, maxTokens
 async function analyzeProductWithAI(input: {
   imageDataUrl: string; productName: string; category?: string; targetAudience?: string;
   country?: string; sellingPrice?: number; currency?: string; mainBenefit?: string; language: 'ar' | 'fr' | 'en';
-}): Promise<{ analysis: Record<string, unknown>; strategy: Record<string, unknown> }> {
+}): Promise<{ analysis: Record<string, unknown>; strategy: Record<string, unknown>; usage: { inputTokens: number; outputTokens: number } }> {
   const { mediaType, base64Data } = parseImageDataUrl(input.imageDataUrl);
   const languageName = aiLanguageName(input.language);
   const hints = [
@@ -616,7 +717,7 @@ async function analyzeProductWithAI(input: {
   const system = `You are an expert e-commerce visual merchandiser and performance-marketing strategist working on Facebook/Instagram/TikTok ads for online shoppers in Algeria and nearby markets who often pay cash-on-delivery. Look carefully at the product photo. Base every claim on what you can actually see in the image or on information the user explicitly provided -- never invent specifications, materials or claims that are not visible or stated; anything you are not certain about goes under "assumptions" instead of being stated as fact. Write every text value in ${languageName}, except the fixed English enum values in "recommendedAngles". Respond with ONLY raw JSON (no markdown fences, no commentary) matching exactly this shape:
 {"analysis":{"productType":string,"keyFeatures":string[],"colors":string[],"design":string,"likelyUse":string,"likelyAudience":string,"valueProposition":string,"benefits":string[],"painPoints":string[],"objections":string[],"assumptions":string[]},"strategy":{"recommendedAngles":string[] (3 to 6 values, each one of: "problem_solution","benefits","emotional","social_proof","premium","price_value","before_after","lifestyle","convenience","urgency" -- pick only what genuinely fits, never all of them),"targetAudience":string,"recommendedPlatform":string,"recommendedObjective":string,"rationale":string}}`;
 
-  const result = await callClaudeForJSON(system, [
+  const { result, usage } = await callClaudeForJSON(system, [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64Data } },
     { type: 'text', text: hints }
   ], 1800);
@@ -637,14 +738,15 @@ async function analyzeProductWithAI(input: {
       recommendedAngles: Array.isArray(strategy.recommendedAngles) && strategy.recommendedAngles.length ? strategy.recommendedAngles : ['benefits', 'emotional', 'social_proof'],
       targetAudience: strategy.targetAudience ?? '', recommendedPlatform: strategy.recommendedPlatform ?? '',
       recommendedObjective: strategy.recommendedObjective ?? '', rationale: strategy.rationale ?? ''
-    }
+    },
+    usage
   };
 }
 
 async function generateConceptsWithAI(input: {
   productName: string; analysis: unknown; angles: string[]; count: number;
   category?: string; mainBenefit?: string; language: 'ar' | 'fr' | 'en';
-}): Promise<Array<{ angle: string; hook: string; primaryText: string; headline: string; cta: string; visualConcept: string; targetAudience: string }>> {
+}): Promise<{ concepts: Array<{ angle: string; hook: string; primaryText: string; headline: string; cta: string; visualConcept: string; targetAudience: string }>; usage: { inputTokens: number; outputTokens: number } }> {
   const languageName = aiLanguageName(input.language);
   const system = `You are an expert direct-response copywriter and art director for Facebook/Instagram/TikTok ads targeting online shoppers in Algeria and nearby markets (cash-on-delivery common). Produce ${input.count} GENUINELY DIFFERENT ad concepts for the SAME product, one per marketing angle given, in the same order. Each concept must differ in real substance -- hook style, emotional tone, framing -- never just a reworded synonym of another concept. Write every text field in ${languageName}. Respond with ONLY raw JSON (no markdown fences, no commentary): a JSON array of exactly ${input.count} objects shaped as:
 {"angle":string (one of the given angles, matching order),"hook":string (under 15 words, scroll-stopping),"primaryText":string (2-4 short benefit-led sentences separated by line breaks, ending with a soft call to action),"headline":string (under 8 words),"cta":string (2-4 words),"visualConcept":string (one sentence describing the ad image/scene for this concept -- must keep the real product exactly as photographed, only changing background/setting/lighting/context),"targetAudience":string (one short phrase)}`;
@@ -657,9 +759,9 @@ async function generateConceptsWithAI(input: {
     `Angles to use, in order, one concept per angle: ${JSON.stringify(input.angles)}`
   ].filter(Boolean).join('\n');
 
-  const result = await callClaudeForJSON(system, userText, 2200);
+  const { result, usage } = await callClaudeForJSON(system, userText, 2200);
   const list: any[] = Array.isArray(result) ? result : Array.isArray(result?.concepts) ? result.concepts : [];
-  return input.angles.map((angle, i) => {
+  const concepts = input.angles.map((angle, i) => {
     const c = list[i] ?? {};
     return {
       angle: typeof c?.angle === 'string' && c.angle ? c.angle : angle,
@@ -671,23 +773,24 @@ async function generateConceptsWithAI(input: {
       targetAudience: typeof c?.targetAudience === 'string' ? c.targetAudience.trim() : ''
     };
   });
+  return { concepts, usage };
 }
 
 async function regenerateConceptWithAI(input: {
   productName: string; angle: string; field: 'hook' | 'copy' | 'all'; language: 'ar' | 'fr' | 'en'; analysis?: unknown;
-}): Promise<Partial<{ hook: string; primaryText: string; headline: string; cta: string; visualConcept: string }>> {
+}): Promise<{ update: Partial<{ hook: string; primaryText: string; headline: string; cta: string; visualConcept: string }>; usage: { inputTokens: number; outputTokens: number } }> {
   const languageName = aiLanguageName(input.language);
   const scope = input.field === 'hook' ? 'ONLY a new "hook"' : input.field === 'copy' ? 'a new "primaryText", "headline" and "cta"' : 'a new "hook", "primaryText", "headline", "cta" and "visualConcept"';
   const system = `You are an expert direct-response copywriter for Facebook/Instagram ads in Algeria. Generate a fresh alternative for the SAME product and marketing angle -- genuinely different wording and framing than a typical first draft, not a synonym swap. Write in ${languageName}. Respond with ONLY raw JSON (no markdown fences): an object with ${scope} (omit fields not requested).`;
   const userText = [`Product: ${input.productName}`, `Marketing angle: ${input.angle}`, input.analysis ? `Product analysis: ${JSON.stringify(input.analysis)}` : null].filter(Boolean).join('\n');
-  const result = await callClaudeForJSON(system, userText, 700);
-  const out: Partial<{ hook: string; primaryText: string; headline: string; cta: string; visualConcept: string }> = {};
-  if (typeof result?.hook === 'string') out.hook = result.hook.trim();
-  if (typeof result?.primaryText === 'string') out.primaryText = result.primaryText.trim();
-  if (typeof result?.headline === 'string') out.headline = result.headline.trim();
-  if (typeof result?.cta === 'string') out.cta = result.cta.trim();
-  if (typeof result?.visualConcept === 'string') out.visualConcept = result.visualConcept.trim();
-  return out;
+  const { result, usage } = await callClaudeForJSON(system, userText, 700);
+  const update: Partial<{ hook: string; primaryText: string; headline: string; cta: string; visualConcept: string }> = {};
+  if (typeof result?.hook === 'string') update.hook = result.hook.trim();
+  if (typeof result?.primaryText === 'string') update.primaryText = result.primaryText.trim();
+  if (typeof result?.headline === 'string') update.headline = result.headline.trim();
+  if (typeof result?.cta === 'string') update.cta = result.cta.trim();
+  if (typeof result?.visualConcept === 'string') update.visualConcept = result.visualConcept.trim();
+  return { update, usage };
 }
 
 // Phase 2: edits the ACTUAL product photo (keeps the product itself locked)
@@ -705,11 +808,14 @@ async function generateConceptImageWithAI(input: { productImageUrl: string; visu
   form.append('prompt', `Keep the exact product from the reference photo completely unchanged -- same shape, color, logo, texture and design ("Product Lock"). Only change the background, setting, lighting and surrounding context to match this ad concept: ${input.visualConcept}. Product: ${input.productName}. Professional e-commerce advertising photo, high quality, realistic.`);
   form.append('size', '1024x1024');
 
-  const response = await fetch('https://api.openai.com/v1/images/edits', {
+  // Image generation legitimately runs longer than text generation, hence the
+  // longer timeout than AI_REQUEST_TIMEOUT_MS -- tune this to whatever your
+  // actual Vercel function maxDuration is configured to.
+  const response = await fetchWithTimeout('https://api.openai.com/v1/images/edits', {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}` },
     body: form as any
-  });
+  }, 90_000);
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     console.error('OpenAI image API error:', response.status, detail);
@@ -777,10 +883,10 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
     const sellingPrice = body.sellingPrice !== undefined && body.sellingPrice !== '' && Number.isFinite(Number(body.sellingPrice)) ? Number(body.sellingPrice) : undefined;
     const currency = typeof body.currency === 'string' && body.currency.trim() ? body.currency.trim() : undefined;
 
-    let result: { analysis: Record<string, unknown>; strategy: Record<string, unknown> };
+    let result: { analysis: Record<string, unknown>; strategy: Record<string, unknown>; usage: { inputTokens: number; outputTokens: number } };
     try {
       result = await analyzeProductWithAI({ imageDataUrl, productName, category, targetAudience, country, sellingPrice, currency, mainBenefit, language: language as any });
-      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_analysis', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language } });
+      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_analysis', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language }, usage: result.usage });
     } catch (err: any) {
       await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_analysis', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { productName, category, language }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
       throw err;
@@ -801,7 +907,6 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to analyze product' });
   }
 });
-
 // Step 2: generate the creative pack (N distinct hook/copy/visual concepts,
 // one per recommended marketing angle) for an already-analyzed campaign.
 app.post('/api/creative-packs/:id/concepts', requireAuth, async (req, res) => {
@@ -826,13 +931,14 @@ app.post('/api/creative-packs/:id/concepts', requireAuth, async (req, res) => {
     const angles: string[] = [];
     for (let i = 0; i < count; i++) angles.push(pool[i % pool.length]);
 
-    let concepts;
+    let concepts: Awaited<ReturnType<typeof generateConceptsWithAI>>['concepts'];
     try {
-      concepts = await generateConceptsWithAI({
+      const generated = await generateConceptsWithAI({
         productName: campaign.productName, analysis: campaign.analysis, angles, count,
         category: campaign.category ?? undefined, mainBenefit: campaign.mainBenefit ?? undefined, language: campaign.language as any
       });
-      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concepts', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { creativePackId: campaign.id, angles } });
+      concepts = generated.concepts;
+      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concepts', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { creativePackId: campaign.id, angles }, usage: generated.usage });
     } catch (err: any) {
       await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concepts', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { creativePackId: campaign.id, angles }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
       throw err;
@@ -875,10 +981,11 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/regenerate', requireAuth, 
     const body = req.body as Record<string, unknown>;
     const field = body.field === 'hook' || body.field === 'copy' ? body.field : 'all';
 
-    let update;
+    let update: Awaited<ReturnType<typeof regenerateConceptWithAI>>['update'];
     try {
-      update = await regenerateConceptWithAI({ productName: campaign.productName, angle: concept.angle, field, language: campaign.language as any, analysis: campaign.analysis });
-      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concept_regenerate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { conceptId: concept.id, field } });
+      const generated = await regenerateConceptWithAI({ productName: campaign.productName, angle: concept.angle, field, language: campaign.language as any, analysis: campaign.analysis });
+      update = generated.update;
+      await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concept_regenerate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { conceptId: concept.id, field }, usage: generated.usage });
     } catch (err: any) {
       await logAiTask(db, { workspaceId, userId, capability: 'creative_pack_concept_regenerate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { conceptId: concept.id, field }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
       throw err;
@@ -1108,7 +1215,7 @@ app.delete('/api/audiences/:id', requireAuth, async (req, res) => {
 // ANTHROPIC_API_KEY" approach as the AI Creative Pack Engine above.
 async function generateAudiencesWithAI(input: {
   productName: string; description?: string; category?: string; country?: string; language: 'ar' | 'fr' | 'en';
-}): Promise<Array<{ name: string; ageMin: number; ageMax: number; gender: string; location: string[]; interests: string[]; explanation: string }>> {
+}): Promise<{ audiences: Array<{ name: string; ageMin: number; ageMax: number; gender: string; location: string[]; interests: string[]; explanation: string }>; usage: { inputTokens: number; outputTokens: number } }> {
   const languageName = aiLanguageName(input.language);
   const system = `You are an expert Meta (Facebook/Instagram) ads media buyer targeting online shoppers in Algeria and nearby markets. Given a product, propose 2 to 3 GENUINELY DIFFERENT candidate audiences to test (different age range, or gender, or interest focus -- not the same audience reworded). Write "name" and "explanation" in ${languageName}; "location" and "interests" as short English/French Meta-interest-style keywords a media buyer would recognize. Respond with ONLY raw JSON (no markdown fences, no commentary): a JSON array of 2 to 3 objects shaped as:
 {"name":string (short label, e.g. "Young urban professionals"),"ageMin":number,"ageMax":number,"gender":"male"|"female"|"all","location":string[] (1-3 short location/region names),"interests":string[] (2-5 short interest keywords, or empty array for a deliberately broad/no-interest audience),"explanation":string (1-2 sentences on why this audience is worth testing for this product)}`;
@@ -1120,9 +1227,9 @@ async function generateAudiencesWithAI(input: {
     input.country ? `Target market/country: ${input.country}` : null
   ].filter(Boolean).join('\n');
 
-  const result = await callClaudeForJSON(system, userText, 1200);
+  const { result, usage } = await callClaudeForJSON(system, userText, 1200);
   const list: any[] = Array.isArray(result) ? result : Array.isArray(result?.audiences) ? result.audiences : [];
-  return list.slice(0, 3).map(a => ({
+  const audiences = list.slice(0, 3).map(a => ({
     name: typeof a?.name === 'string' && a.name.trim() ? a.name.trim() : 'Suggested audience',
     ageMin: Number.isFinite(Number(a?.ageMin)) ? Math.max(13, Math.round(Number(a.ageMin))) : 18,
     ageMax: Number.isFinite(Number(a?.ageMax)) ? Math.round(Number(a.ageMax)) : 45,
@@ -1131,6 +1238,7 @@ async function generateAudiencesWithAI(input: {
     interests: Array.isArray(a?.interests) ? a.interests.filter((v: unknown) => typeof v === 'string') : [],
     explanation: typeof a?.explanation === 'string' ? a.explanation.trim() : ''
   }));
+  return { audiences, usage };
 }
 
 app.post('/api/audiences/generate', requireAuth, async (req, res) => {
@@ -1164,10 +1272,11 @@ app.post('/api/audiences/generate', requireAuth, async (req, res) => {
     }
     const country = typeof body.country === 'string' && body.country.trim() ? body.country.trim() : undefined;
 
-    let suggestions;
+    let suggestions: Awaited<ReturnType<typeof generateAudiencesWithAI>>['audiences'];
     try {
-      suggestions = await generateAudiencesWithAI({ productName, description, category, country, language: language as any });
-      await logAiTask(db, { workspaceId, userId, capability: 'audience_generate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language } });
+      const generated = await generateAudiencesWithAI({ productName, description, category, country, language: language as any });
+      suggestions = generated.audiences;
+      await logAiTask(db, { workspaceId, userId, capability: 'audience_generate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'SUCCEEDED', inputJson: { productName, category, language }, usage: generated.usage });
     } catch (err: any) {
       await logAiTask(db, { workspaceId, userId, capability: 'audience_generate', provider: 'ANTHROPIC', model: ANTHROPIC_MODEL, status: 'FAILED', inputJson: { productName, category, language }, errorMessage: err instanceof Error ? err.message : 'unknown error' });
       throw err;
@@ -1185,7 +1294,6 @@ app.post('/api/audiences/generate', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to generate audiences' });
   }
 });
-
 // Translates the DB's Order row into the shape src/types/index.ts already expects
 // (businessId naming, orderDate as an ISO string, status lowercased since the
 // DB enum is uppercase with the same words -- see toApiProduct() above for the
@@ -1222,6 +1330,23 @@ const ORDER_STATUSES = new Set([
   'out_for_delivery', 'delivered', 'cancelled', 'refused', 'returned'
 ]);
 
+// Which statuses an order may move to FROM its current status. Previously any
+// status could be set from any other (e.g. DELIVERED -> NEW), which made no
+// business sense -- see audit finding P14. CANCELLED/RETURNED are terminal.
+// Every status is allowed to transition to itself (a no-op re-save).
+const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
+  NEW: ['NEW', 'PENDING_CONFIRMATION', 'CONFIRMED', 'CANCELLED'],
+  PENDING_CONFIRMATION: ['PENDING_CONFIRMATION', 'CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['CONFIRMED', 'PREPARING', 'CANCELLED'],
+  PREPARING: ['PREPARING', 'SHIPPED', 'CANCELLED'],
+  SHIPPED: ['SHIPPED', 'OUT_FOR_DELIVERY', 'RETURNED'],
+  OUT_FOR_DELIVERY: ['OUT_FOR_DELIVERY', 'DELIVERED', 'REFUSED', 'RETURNED'],
+  DELIVERED: ['DELIVERED', 'RETURNED'],
+  REFUSED: ['REFUSED', 'RETURNED'],
+  CANCELLED: ['CANCELLED'],
+  RETURNED: ['RETURNED']
+};
+
 app.get('/api/orders', requireAuth, async (req, res) => {
   try {
     const db = getPrisma();
@@ -1252,8 +1377,8 @@ app.post('/api/orders', requireAuth, async (req, res) => {
     if (!customerName || !phone || !wilaya || !productName || !Number.isFinite(price)) {
       return res.status(400).json({ error: 'customerName, phone, wilaya, productName and price are required' });
     }
-    const quantity = Number(body.quantity) > 0 ? Math.round(Number(body.quantity)) : 1;
-    const deliveryFee = Number(body.deliveryFee) || 0;
+    const quantity = parseOptionalQuantity(body.quantity);
+    const deliveryFee = parseOptionalNumeric(body.deliveryFee, 'deliveryFee');
     const total = Number(body.total);
     const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
 
@@ -1285,8 +1410,9 @@ app.post('/api/orders', requireAuth, async (req, res) => {
       }
     });
     return res.status(201).json({ order: toApiOrder(created) });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Create order failed:', error);
+    if (typeof error?.status === 'number') return res.status(error.status).json({ error: error.message });
     return res.status(500).json({ error: 'Failed to create order' });
   }
 });
@@ -1311,7 +1437,12 @@ app.patch('/api/orders/:id', requireAuth, async (req, res) => {
     if (typeof body.status === 'string') {
       const statusInput = body.status.trim().toLowerCase();
       if (!ORDER_STATUSES.has(statusInput)) return res.status(400).json({ error: 'A valid status is required' });
-      data.status = statusInput.toUpperCase();
+      const nextStatus = statusInput.toUpperCase();
+      const allowedNext = ORDER_STATUS_TRANSITIONS[existing.status] ?? [];
+      if (!allowedNext.includes(nextStatus)) {
+        return res.status(400).json({ error: `Cannot move an order from ${existing.status} to ${nextStatus}` });
+      }
+      data.status = nextStatus;
     }
     if (typeof body.customerName === 'string') data.customerName = body.customerName.trim();
     if (typeof body.phone === 'string') data.phone = body.phone.trim();
@@ -1329,17 +1460,18 @@ app.patch('/api/orders/:id', requireAuth, async (req, res) => {
       }
       data.productId = productId;
     }
-    if (body.quantity !== undefined) data.quantity = Number(body.quantity) > 0 ? Math.round(Number(body.quantity)) : 1;
-    if (body.price !== undefined) data.price = Number(body.price) || 0;
-    if (body.deliveryFee !== undefined) data.deliveryFee = Number(body.deliveryFee) || 0;
-    if (body.total !== undefined) data.total = Number(body.total) || 0;
+    if (body.quantity !== undefined) data.quantity = parseOptionalQuantity(body.quantity);
+    if (body.price !== undefined) data.price = parseOptionalNumeric(body.price, 'price');
+    if (body.deliveryFee !== undefined) data.deliveryFee = parseOptionalNumeric(body.deliveryFee, 'deliveryFee');
+    if (body.total !== undefined) data.total = parseOptionalNumeric(body.total, 'total');
 
     if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No changes provided' });
 
     const updated = await db.order.update({ where: { id: existing.id }, data: data as any });
     return res.json({ order: toApiOrder(updated) });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Update order failed:', error);
+    if (typeof error?.status === 'number') return res.status(error.status).json({ error: error.message });
     return res.status(500).json({ error: 'Failed to update order' });
   }
 });
