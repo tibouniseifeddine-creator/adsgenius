@@ -45,6 +45,50 @@ async function userResponse(userId: string) {
   });
 }
 
+// ---- Lightweight rate limiting (best-effort, not a hard cross-instance guarantee) ----
+// Vercel may run multiple concurrent instances of this function, each with its
+// own memory, so a burst spread across cold instances won't all share this
+// counter. It still meaningfully slows down scripted brute-force/spam/AI-cost
+// abuse from a client repeatedly hitting the same warm instance, which is the
+// overwhelmingly common case. A hard, cross-instance guarantee would need a
+// shared store (Redis/Vercel KV) or a DB-backed counter -- a good follow-up
+// once that infrastructure exists.
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
+  const now = Date.now();
+  // Opportunistic cleanup so the map doesn't grow unbounded in a long-lived warm instance.
+  if (Math.random() < 0.01) {
+    for (const [k, bucket] of rateLimitBuckets) {
+      if (now > bucket.resetAt) rateLimitBuckets.delete(k);
+    }
+  }
+  const bucket = rateLimitBuckets.get(key);
+  if (!bucket || now > bucket.resetAt) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (bucket.count >= maxAttempts) return false;
+  bucket.count += 1;
+  return true;
+}
+
+function clientIp(req: express.Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
+  return first?.trim() || req.socket.remoteAddress || 'unknown';
+}
+
+function rateLimited(res: express.Response, retryAfterSeconds: number) {
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  return res.status(429).json({ error: 'Too many requests -- please try again shortly.' });
+}
+
+const LOGIN_IP_LIMIT = { max: 20, windowMs: 15 * 60 * 1000 };
+const LOGIN_EMAIL_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
+const PUBLIC_ORDER_IP_LIMIT = { max: 10, windowMs: 10 * 60 * 1000 };
+const AI_WORKSPACE_LIMIT = { max: 40, windowMs: 60 * 60 * 1000 };
+
 app.get('/api/health', (_req, res) => {
   return res.json({
     ok: true,
@@ -88,7 +132,16 @@ app.post('/api/auth/login', async (req, res) => {
     const db = getPrisma();
     const { email, password } = req.body as Record<string, string>;
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-    const user = await db.user.findUnique({ where: { email: email.trim().toLowerCase() } });
+    const normalizedEmail = email.trim().toLowerCase();
+    // Two independent limits: per-IP (stops one client trying many emails) and
+    // per-email (stops distributed attempts against a single account).
+    if (
+      !checkRateLimit(`login:ip:${clientIp(req)}`, LOGIN_IP_LIMIT.max, LOGIN_IP_LIMIT.windowMs) ||
+      !checkRateLimit(`login:email:${normalizedEmail}`, LOGIN_EMAIL_LIMIT.max, LOGIN_EMAIL_LIMIT.windowMs)
+    ) {
+      return rateLimited(res, 60);
+    }
+    const user = await db.user.findUnique({ where: { email: normalizedEmail } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: 'Invalid email or password' });
     return res.json({ user: await userResponse(user.id), token: tokenFor(user.id) });
   } catch (error) {
@@ -385,6 +438,7 @@ app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const body = req.body as Record<string, unknown>;
     const language = body.language === 'fr' || body.language === 'en' ? body.language : 'ar';
@@ -706,6 +760,7 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
     const userId = (req as any).userId as string;
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const body = req.body as Record<string, unknown>;
     const productName = typeof body.productName === 'string' ? body.productName.trim() : '';
@@ -755,6 +810,7 @@ app.post('/api/creative-packs/:id/concepts', requireAuth, async (req, res) => {
     const userId = (req as any).userId as string;
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -809,6 +865,7 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/regenerate', requireAuth, 
     const userId = (req as any).userId as string;
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -844,6 +901,7 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/generate-image', requireAu
     const userId = (req as any).userId as string;
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -1081,6 +1139,7 @@ app.post('/api/audiences/generate', requireAuth, async (req, res) => {
     const userId = (req as any).userId as string;
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
 
     const body = req.body as Record<string, unknown>;
     const language = body.language === 'fr' || body.language === 'en' ? body.language : 'ar';
@@ -1495,6 +1554,9 @@ const PUBLIC_ORDER_MAX_QUANTITY = 50;
 
 app.post('/api/public/orders', async (req, res) => {
   try {
+    if (!checkRateLimit(`public-order:ip:${clientIp(req)}`, PUBLIC_ORDER_IP_LIMIT.max, PUBLIC_ORDER_IP_LIMIT.windowMs)) {
+      return rateLimited(res, 60);
+    }
     const db = getPrisma();
     const body = req.body as Record<string, unknown>;
 
@@ -1543,6 +1605,7 @@ app.post('/api/public/orders', async (req, res) => {
     return res.status(500).json({ error: 'Failed to submit order' });
   }
 });
+
 
 if (!process.env.VERCEL) {
   app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
