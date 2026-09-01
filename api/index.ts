@@ -172,6 +172,13 @@ const LOGIN_EMAIL_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
 const PUBLIC_ORDER_IP_LIMIT = { max: 10, windowMs: 10 * 60 * 1000 };
 const AI_WORKSPACE_LIMIT = { max: 40, windowMs: 60 * 60 * 1000 };
 
+// Hard cap on the unpaginated list endpoints (products/creatives/creative-packs/
+// audiences/orders) -- see audit finding P23. No workspace is anywhere near this
+// volume yet, so this is a safety ceiling rather than real pagination; add proper
+// cursor/offset pagination (and update the frontend to request pages) once a
+// workspace's data genuinely outgrows a single response.
+const LIST_PAGE_CAP = 200;
+
 app.get('/api/health', (_req, res) => {
   return res.json({
     ok: true,
@@ -339,7 +346,7 @@ app.get('/api/products', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.json({ products: [] });
-    const rows = await db.product.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await db.product.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: LIST_PAGE_CAP });
     return res.json({ products: rows.map(toApiProduct) });
   } catch (error) {
     console.error('List products failed:', error);
@@ -421,7 +428,7 @@ app.get('/api/creatives', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.json({ creatives: [] });
-    const rows = await db.creative.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await db.creative.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: LIST_PAGE_CAP });
     return res.json({ creatives: rows.map(toApiCreative) });
   } catch (error) {
     console.error('List creatives failed:', error);
@@ -1107,7 +1114,7 @@ app.get('/api/creative-packs', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.json({ creativePacks: [] });
-    const rows = await db.creativePack.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await db.creativePack.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: LIST_PAGE_CAP });
     return res.json({ creativePacks: rows.map(c => toApiCreativePack(c, [])) });
   } catch (error) {
     console.error('List campaigns failed:', error);
@@ -1213,7 +1220,7 @@ app.get('/api/audiences', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.json({ audiences: [] });
-    const rows = await db.audience.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await db.audience.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: LIST_PAGE_CAP });
     return res.json({ audiences: rows.map(toApiAudience) });
   } catch (error) {
     console.error('List audiences failed:', error);
@@ -1414,7 +1421,7 @@ app.get('/api/orders', requireAuth, async (req, res) => {
     const db = getPrisma();
     const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
     if (!workspaceId) return res.json({ orders: [] });
-    const rows = await db.order.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await db.order.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: LIST_PAGE_CAP });
     return res.json({ orders: rows.map(toApiOrder) });
   } catch (error) {
     console.error('List orders failed:', error);
