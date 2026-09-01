@@ -23,6 +23,7 @@ export function AISummary() {
       <div className="flex items-center gap-2 mb-4">
         <Sparkles className="w-5 h-5 text-amber-400" />
         <h3 className="text-lg font-semibold">{t('aiSummary')}</h3>
+        <Badge variant="warning" className="text-xs">Sample</Badge>
       </div>
       <div className="space-y-3">
         {pendingRecs.slice(0, 3).map(rec => (
