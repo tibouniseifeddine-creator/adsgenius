@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 
 export const app = express();
@@ -40,8 +41,53 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
   return next(err);
 });
 
-function tokenFor(userId: string) {
-  return jwt.sign({ sub: userId }, getJwtSecret(), { expiresIn: '7d' });
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // must match the JWT's own expiresIn below
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// Issues a signed JWT AND records it in AuthSession so it can actually be
+// revoked server-side later (see requireAuth/verifyAccessToken and POST
+// /api/auth/logout below) -- previously a logout only ever forgot the token
+// on the client, so a copy of it elsewhere (a shared device, a leaked token)
+// stayed valid until its natural 7-day expiry. See audit finding P26.
+// Deliberately NOT best-effort/non-fatal: if this insert fails, the caller's
+// register/login should fail loudly too, rather than hand back a token that
+// requireAuth would immediately reject on the very next request.
+async function tokenFor(db: PrismaClient, userId: string): Promise<string> {
+  const token = jwt.sign({ sub: userId }, getJwtSecret(), { expiresIn: '7d' });
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  // This app has no refresh-token flow (a single 7-day access JWT only), but
+  // the AuthSession table (pre-existing in the schema) requires a unique
+  // refreshTokenHash/refreshExpiresAt pair -- it was clearly designed for a
+  // future refresh-token feature that was never built. Fill them with an
+  // unused, never-checked placeholder rather than leaving the fields out.
+  await db.authSession.create({
+    data: {
+      userId,
+      accessTokenHash: hashToken(token),
+      refreshTokenHash: hashToken(crypto.randomUUID()),
+      expiresAt,
+      refreshExpiresAt: expiresAt
+    }
+  });
+  return token;
+}
+
+// Shared by requireAuth and GET /api/auth/me: checks the JWT's own
+// signature/expiry AND that its AuthSession hasn't been revoked (logout) or
+// expired server-side. Throws on any failure -- callers turn that into a 401.
+async function verifyAccessToken(db: PrismaClient, authHeader: string | undefined): Promise<string> {
+  if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
+  const token = authHeader.slice(7);
+  const payload = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
+  const userId = String(payload.sub);
+  const session = await db.authSession.findUnique({ where: { accessTokenHash: hashToken(token) } });
+  if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
+    throw new Error('Unauthorized');
+  }
+  return userId;
 }
 
 async function userResponse(userId: string) {
@@ -164,7 +210,7 @@ app.post('/api/auth/register', async (req, res) => {
       await tx.workspaceMember.create({ data: { workspaceId: workspace.id, userId: created.id, role: 'OWNER' } });
       return created;
     });
-    return res.status(201).json({ user: await userResponse(user.id), token: tokenFor(user.id) });
+    return res.status(201).json({ user: await userResponse(user.id), token: await tokenFor(db, user.id) });
   } catch (error) {
     console.error('Registration failed:', error);
     const message = error instanceof Error ? error.message : 'Registration failed';
@@ -195,7 +241,7 @@ app.post('/api/auth/login', async (req, res) => {
     // the compare entirely when !user) was the actual side channel.
     const passwordValid = await bcrypt.compare(password, user?.passwordHash ?? LOGIN_DUMMY_HASH);
     if (!user || !passwordValid) return res.status(401).json({ error: 'Invalid email or password' });
-    return res.json({ user: await userResponse(user.id), token: tokenFor(user.id) });
+    return res.json({ user: await userResponse(user.id), token: await tokenFor(db, user.id) });
   } catch (error) {
     console.error('Login failed:', error);
     const message = error instanceof Error ? error.message : 'Login failed';
@@ -205,10 +251,8 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', async (req, res) => {
   try {
-    const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
-    const payload = jwt.verify(header.slice(7), getJwtSecret()) as jwt.JwtPayload;
-    const user = await userResponse(String(payload.sub));
+    const userId = await verifyAccessToken(getPrisma(), req.headers.authorization);
+    const user = await userResponse(userId);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
     return res.json({ user });
   } catch {
@@ -216,14 +260,34 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
-// Shared auth guard for every endpoint below. Verifies the bearer JWT the same
-// way /api/auth/me already does, and attaches the user id to the request.
-async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+// Revokes the current session server-side (see verifyAccessToken/AuthSession
+// above) so a copy of this token elsewhere -- a shared device, a leaked
+// token -- stops working immediately instead of staying valid until its
+// natural 7-day expiry. See audit finding P26. Deliberately NOT gated behind
+// requireAuth and always returns 204: an already-expired/invalid/re-sent
+// token still means "this token should not work", which is already true, so
+// logout should never itself fail or 401.
+app.post('/api/auth/logout', async (req, res) => {
   try {
     const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
-    const payload = jwt.verify(header.slice(7), getJwtSecret()) as jwt.JwtPayload;
-    (req as any).userId = String(payload.sub);
+    if (header?.startsWith('Bearer ')) {
+      await getPrisma().authSession.updateMany({
+        where: { accessTokenHash: hashToken(header.slice(7)), revokedAt: null },
+        data: { revokedAt: new Date() }
+      });
+    }
+  } catch (error) {
+    console.error('Logout revoke failed (non-fatal):', error);
+  }
+  return res.status(204).end();
+});
+
+// Shared auth guard for every endpoint below. Verifies the bearer JWT AND its
+// AuthSession the same way /api/auth/me already does, and attaches the user
+// id to the request.
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    (req as any).userId = await verifyAccessToken(getPrisma(), req.headers.authorization);
     next();
   } catch {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -364,7 +428,6 @@ app.get('/api/creatives', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Failed to load creatives' });
   }
 });
-
 // There is no real AI generation yet, so every creative is entered by hand
 // here via the Creative Studio page's "Add Creative" form (mirrors how
 // /api/orders works for manual order entry -- see src/pages/Orders.tsx).
@@ -742,7 +805,6 @@ async function analyzeProductWithAI(input: {
     usage
   };
 }
-
 async function generateConceptsWithAI(input: {
   productName: string; analysis: unknown; angles: string[]; count: number;
   category?: string; mainBenefit?: string; language: 'ar' | 'fr' | 'en';
@@ -907,6 +969,7 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to analyze product' });
   }
 });
+
 // Step 2: generate the creative pack (N distinct hook/copy/visual concepts,
 // one per recommended marketing angle) for an already-analyzed campaign.
 app.post('/api/creative-packs/:id/concepts', requireAuth, async (req, res) => {
@@ -999,7 +1062,6 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/regenerate', requireAuth, 
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to regenerate' });
   }
 });
-
 // Phase 2: generate (or retry) an AI image for one concept, edited from the
 // campaign's real product photo. Requires OPENAI_API_KEY.
 app.post('/api/creative-packs/:id/concepts/:conceptId/generate-image', requireAuth, async (req, res) => {
@@ -1294,6 +1356,7 @@ app.post('/api/audiences/generate', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to generate audiences' });
   }
 });
+
 // Translates the DB's Order row into the shape src/types/index.ts already expects
 // (businessId naming, orderDate as an ISO string, status lowercased since the
 // DB enum is uppercase with the same words -- see toApiProduct() above for the
@@ -1324,7 +1387,6 @@ function toApiOrder(o: {
     trackingNumber: o.trackingNumber ?? undefined
   };
 }
-
 const ORDER_STATUSES = new Set([
   'new', 'pending_confirmation', 'confirmed', 'preparing', 'shipped',
   'out_for_delivery', 'delivered', 'cancelled', 'refused', 'returned'
