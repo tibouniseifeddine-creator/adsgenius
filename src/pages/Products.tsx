@@ -168,7 +168,13 @@ export function Products() {
                         >
                           {copiedId === product.id ? <Check className="w-4 h-4 text-green-600" /> : <Link2 className="w-4 h-4" />}
                         </Button>
-                        {product.aiAnalysis ? <Badge variant="success" className="text-xs">AI Analyzed</Badge> : <Button variant="secondary" size="sm"><Wand2 className="w-4 h-4 mr-1" /> Analyze</Button>}
+                        {product.aiAnalysis ? <Badge variant="success" className="text-xs">AI Analyzed</Badge> : (
+                          <Button
+                            variant="secondary" size="sm"
+                            title="AI product analysis isn't built yet -- opens Creative Studio, which already generates real AI ad concepts for this product"
+                            onClick={() => navigate('/creative-studio')}
+                          ><Wand2 className="w-4 h-4 mr-1" /> Analyze</Button>
+                        )}
                       </div>
                     </td>
                   </tr>
