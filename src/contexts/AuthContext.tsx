@@ -85,7 +85,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
   };
 
-  const logout = () => clearSession();
+  // Clears the local session immediately (so the UI feels instant even
+  // offline), then best-effort tells the server to revoke this exact token
+  // too -- see audit finding P26. Previously logout only ever forgot the
+  // token locally, so a copy of it elsewhere (a shared device, a leaked
+  // token) stayed valid until its natural 7-day expiry regardless.
+  const logout = () => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    clearSession();
+    if (token) {
+      fetch(`${API_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    }
+  };
   return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error }}>{children}</AuthContext.Provider>;
 }
 
