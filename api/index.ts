@@ -289,6 +289,30 @@ app.post('/api/auth/logout', async (req, res) => {
   return res.status(204).end();
 });
 
+// Lets a signed-in user change their own password -- see audit finding P22
+// (Settings.tsx had a "Change Password" button with no backend behind it).
+// Requires the current password so a stolen/left-open session can't be used
+// to lock the real owner out.
+app.patch('/api/auth/password', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const { currentPassword, newPassword } = req.body as Record<string, string>;
+    if (!currentPassword || !newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: 'Current password and a new password of at least 8 characters are required' });
+    }
+    const user = await db.user.findUnique({ where: { id: (req as any).userId } });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await db.user.update({ where: { id: user.id }, data: { passwordHash } });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Password change failed:', error);
+    return res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
 // Shared auth guard for every endpoint below. Verifies the bearer JWT AND its
 // AuthSession the same way /api/auth/me already does, and attaches the user
 // id to the request.
@@ -311,6 +335,50 @@ async function getUserWorkspaceId(db: PrismaClient, userId: string): Promise<str
   });
   return membership?.workspaceId ?? null;
 }
+
+// Translates the DB's Workspace row into the shape Settings.tsx expects (see
+// audit finding P22 -- Settings.tsx used to read from a `business` object
+// that was declared but never actually populated from anywhere).
+function toApiWorkspace(w: { id: string; name: string; defaultCountryCode: string; defaultCurrency: string; timezone: string }) {
+  return { id: w.id, name: w.name, country: w.defaultCountryCode, currency: w.defaultCurrency, timezone: w.timezone };
+}
+
+app.get('/api/workspace', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(404).json({ error: 'No workspace found for this account' });
+    const workspace = await db.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true, defaultCountryCode: true, defaultCurrency: true, timezone: true }
+    });
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+    return res.json({ workspace: toApiWorkspace(workspace) });
+  } catch (error) {
+    console.error('Load workspace failed:', error);
+    return res.status(500).json({ error: 'Failed to load workspace' });
+  }
+});
+
+app.patch('/api/workspace', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(404).json({ error: 'No workspace found for this account' });
+    const body = req.body as Record<string, unknown>;
+    const data: Record<string, unknown> = {};
+    if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim();
+    if (typeof body.country === 'string' && body.country.trim()) data.defaultCountryCode = body.country.trim();
+    if (typeof body.currency === 'string' && body.currency.trim()) data.defaultCurrency = body.currency.trim().toUpperCase().slice(0, 3);
+    if (typeof body.timezone === 'string' && body.timezone.trim()) data.timezone = body.timezone.trim();
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No valid fields to update' });
+    const updated = await db.workspace.update({ where: { id: workspaceId }, data: data as any });
+    return res.json({ workspace: toApiWorkspace(updated) });
+  } catch (error) {
+    console.error('Update workspace failed:', error);
+    return res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
 
 // Translates the DB's Product row into the shape src/types/index.ts already expects
 // on the frontend (purchaseCost/sellingPrice/deliveryCost naming, images/videos as
