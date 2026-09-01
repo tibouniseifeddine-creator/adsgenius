@@ -20,23 +20,11 @@ enum MembershipStatus {
   SUSPENDED
 }
 
-enum ProductVariantStatus {
-  ACTIVE
-  INACTIVE
-}
-
 enum CreativeStatus {
   DRAFT
   READY
   APPROVED
   ARCHIVED
-}
-
-enum CreativeAssetType {
-  IMAGE
-  VIDEO
-  AUDIO
-  OTHER
 }
 
 enum AIProvider {
@@ -202,7 +190,6 @@ model Product {
   createdAt             DateTime         @default(now()) @map("created_at")
   updatedAt             DateTime         @updatedAt @map("updated_at")
   workspace             Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  variants              ProductVariant[]
   creatives             Creative[]
   orders                Order[]
   audiences             Audience[]
@@ -211,25 +198,6 @@ model Product {
   @@index([workspaceId, active])
   @@index([workspaceId, category])
   @@map("products")
-}
-
-model ProductVariant {
-  id          String               @id @default(uuid())
-  productId   String               @map("product_id")
-  sku         String?
-  name        String
-  attributes  Json                 @default("{}")
-  baseCost    Decimal?             @db.Decimal(18, 2) @map("base_cost")
-  salePrice   Decimal?             @db.Decimal(18, 2) @map("sale_price")
-  stock       Int                  @default(0)
-  status      ProductVariantStatus @default(ACTIVE)
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
-  product     Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@unique([productId, sku])
-  @@index([productId, status])
-  @@map("product_variants")
 }
 
 model Creative {
@@ -253,66 +221,11 @@ model Creative {
   updatedAt   DateTime        @updatedAt @map("updated_at")
   workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   product     Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
-  versions    CreativeVersion[]
-  assets      CreativeAsset[]
-  copies      CreativeCopy[]
   aiTasks     AITask[]
 
   @@index([workspaceId, status])
   @@index([workspaceId, productId])
   @@map("creatives")
-}
-
-model CreativeVersion {
-  id          String         @id @default(uuid())
-  creativeId  String         @map("creative_id")
-  version     Int
-  changeNote  String?        @map("change_note")
-  metadata    Json           @default("{}")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  creative    Creative       @relation(fields: [creativeId], references: [id], onDelete: Cascade)
-  assets      CreativeAsset[]
-  copies      CreativeCopy[]
-
-  @@unique([creativeId, version])
-  @@index([creativeId, createdAt])
-  @@map("creative_versions")
-}
-
-model CreativeAsset {
-  id         String            @id @default(uuid())
-  creativeId String            @map("creative_id")
-  versionId  String?           @map("version_id")
-  type       CreativeAssetType
-  storageKey String?           @map("storage_key")
-  externalUrl String?          @map("external_url")
-  mimeType   String?           @map("mime_type")
-  metadata   Json              @default("{}")
-  createdAt  DateTime          @default(now()) @map("created_at")
-  creative   Creative          @relation(fields: [creativeId], references: [id], onDelete: Cascade)
-  version    CreativeVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
-
-  @@index([creativeId, createdAt])
-  @@index([versionId])
-  @@map("creative_assets")
-}
-
-model CreativeCopy {
-  id         String          @id @default(uuid())
-  creativeId String          @map("creative_id")
-  versionId  String?         @map("version_id")
-  primaryText String?        @map("primary_text")
-  headline   String?
-  cta        String?
-  language   String          @default("en")
-  metadata   Json            @default("{}")
-  createdAt  DateTime        @default(now()) @map("created_at")
-  creative   Creative        @relation(fields: [creativeId], references: [id], onDelete: Cascade)
-  version    CreativeVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
-
-  @@index([creativeId, createdAt])
-  @@index([versionId])
-  @@map("creative_copies")
 }
 
 // A manually-entered order (see Orders.tsx "Add Order" form). There is no
