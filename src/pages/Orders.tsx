@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Phone, MessageCircle, CheckCircle, XCircle, Truck, Pencil, Printer, X, ClipboardList, Loader2, AlertTriangle, PackageCheck, Wifi } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Plus, Phone, MessageCircle, CheckCircle, XCircle, Truck, Pencil, Printer, X, ClipboardList, Loader2, AlertTriangle, PackageCheck, Wifi, MoreVertical } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
@@ -91,6 +91,21 @@ export function Orders() {
   const [shipError, setShipError] = useState<string | null>(null);
   const [testingZr, setTestingZr] = useState(false);
   const [zrTestResult, setZrTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // Which row's "more actions" menu is open, if any -- see audit finding P29
+  // (the actions cell used to pack up to 7 icon buttons with no wrap).
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const openMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (openMenuRef.current && !openMenuRef.current.contains(event.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openMenuId]);
 
   const loadOrders = () => {
     setLoading(true);
@@ -365,11 +380,11 @@ export function Orders() {
                     <td className="px-4 py-3 font-medium">{order.total.toLocaleString()} DZD</td>
                     <td className="px-4 py-3"><Badge variant={statusColors[order.status]}>{t(order.status as any)}</Badge></td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-1">
+                      <div className="flex items-center gap-1">
                         {order.status === 'pending_confirmation' && (
                           <>
-                            <Button variant="success" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'confirmed')}><CheckCircle className="w-3 h-3" /></Button>
-                            <Button variant="danger" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'cancelled')}><XCircle className="w-3 h-3" /></Button>
+                            <Button variant="success" size="sm" title="Confirm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'confirmed')}><CheckCircle className="w-3 h-3" /></Button>
+                            <Button variant="danger" size="sm" title="Cancel" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'cancelled')}><XCircle className="w-3 h-3" /></Button>
                           </>
                         )}
                         {SHIPPABLE_STATUSES.has(order.status) && !order.trackingNumber && (
@@ -382,28 +397,51 @@ export function Orders() {
                           </Button>
                         )}
                         {order.status === 'confirmed' && (
-                          <Button variant="secondary" size="sm" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'shipped')}><Truck className="w-3 h-3" /></Button>
+                          <Button variant="secondary" size="sm" title="Mark as shipped" disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'shipped')}><Truck className="w-3 h-3" /></Button>
                         )}
-                        <Button
-                          variant="ghost" size="sm" title={`Call ${order.phone}`}
-                          onClick={() => { window.location.href = `tel:${order.phone}`; }}
-                        >
-                          <Phone className="w-3 h-3" />
-                        </Button>
-                        <Button
-                          variant="ghost" size="sm" title={`WhatsApp ${order.phone}`}
-                          onClick={() => window.open(`https://wa.me/${toWhatsAppNumber(order.phone)}`, '_blank', 'noopener,noreferrer')}
-                        >
-                          <MessageCircle className="w-3 h-3" />
-                        </Button>
-                        <Button variant="ghost" size="sm" title="Edit order" onClick={() => openEditModal(order)}>
-                          <Pencil className="w-3 h-3" />
-                        </Button>
-                        {PRINTABLE_STATUSES.has(order.status) && (
-                          <Button variant="ghost" size="sm" title="Print delivery slip" onClick={() => printOrder(order)}>
-                            <Printer className="w-3 h-3" />
+                        {/* Everything else (call/WhatsApp/edit/print) lives in this single
+                            "more actions" menu instead of its own always-visible icon --
+                            up to 7 icons in a row with no wrap made this cell overflow on
+                            narrow screens. See audit finding P29. */}
+                        <div className="relative">
+                          <Button variant="ghost" size="sm" title="More actions" onClick={() => setOpenMenuId(openMenuId === order.id ? null : order.id)}>
+                            <MoreVertical className="w-3 h-3" />
                           </Button>
-                        )}
+                          {openMenuId === order.id && (
+                            <div ref={openMenuRef} className="absolute right-0 top-full z-10 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm">
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                onClick={() => { setOpenMenuId(null); window.location.href = `tel:${order.phone}`; }}
+                              >
+                                <Phone className="w-3.5 h-3.5" /> Call
+                              </button>
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                onClick={() => { setOpenMenuId(null); window.open(`https://wa.me/${toWhatsAppNumber(order.phone)}`, '_blank', 'noopener,noreferrer'); }}
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                              </button>
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                onClick={() => { setOpenMenuId(null); openEditModal(order); }}
+                              >
+                                <Pencil className="w-3.5 h-3.5" /> Edit order
+                              </button>
+                              {PRINTABLE_STATUSES.has(order.status) && (
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                  onClick={() => { setOpenMenuId(null); printOrder(order); }}
+                                >
+                                  <Printer className="w-3.5 h-3.5" /> Print slip
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
