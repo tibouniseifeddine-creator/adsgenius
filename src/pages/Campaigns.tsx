@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Play, Pause, Eye, BarChart3 } from 'lucide-react';
+import { Plus, Play, Pause, Eye, BarChart3, Info } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -7,6 +7,12 @@ import { useDemo } from '../contexts/DemoContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigate } from 'react-router-dom';
 
+// See audit finding P09/P21 -- there is no real Campaign/AdSet/Ad backend or
+// Meta Ads connection yet (that's the larger, deliberately-deferred work
+// tracked separately), so this list is illustrative sample data and its
+// per-campaign action buttons used to sit there doing nothing when clicked.
+// Rather than pretend they work, the page now says plainly that this is a
+// preview and disables the actions until a real ad account is connected.
 export function Campaigns() {
   const { t } = useLanguage();
   const { campaigns, products } = useDemo();
@@ -17,6 +23,10 @@ export function Campaigns() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">{t('campaigns')}</h1>
         <Button onClick={() => navigate('/campaign-builder')}><Plus className="w-4 h-4 mr-2" />{t('campaignBuilder')}</Button>
+      </div>
+      <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 text-blue-800 text-sm rounded-lg p-3">
+        <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <span>Preview data -- these are sample campaigns. Live management (pause/resume, stats) activates once a real ad account is connected.</span>
       </div>
       <div className="space-y-4">
         {campaigns.map(campaign => {
@@ -41,9 +51,11 @@ export function Campaigns() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="ghost" size="sm"><Eye className="w-4 h-4" /></Button>
-                  <Button variant="ghost" size="sm"><BarChart3 className="w-4 h-4" /></Button>
-                  {campaign.status === 'active' ? <Button variant="secondary" size="sm"><Pause className="w-4 h-4" /></Button> : <Button variant="success" size="sm"><Play className="w-4 h-4" /></Button>}
+                  <Button variant="ghost" size="sm" disabled title="Requires a connected ad account -- coming soon"><Eye className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="sm" disabled title="Requires a connected ad account -- coming soon"><BarChart3 className="w-4 h-4" /></Button>
+                  {campaign.status === 'active'
+                    ? <Button variant="secondary" size="sm" disabled title="Requires a connected ad account -- coming soon"><Pause className="w-4 h-4" /></Button>
+                    : <Button variant="success" size="sm" disabled title="Requires a connected ad account -- coming soon"><Play className="w-4 h-4" /></Button>}
                 </div>
               </div>
             </Card>
