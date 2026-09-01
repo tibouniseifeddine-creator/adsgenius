@@ -1,11 +1,18 @@
 import React from 'react';
-import { Brain, CheckCircle, XCircle, AlertTriangle, TrendingUp, TrendingDown, Lightbulb } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, TrendingUp, TrendingDown, Lightbulb, Info } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useDemo } from '../contexts/DemoContext';
 import { useLanguage } from '../contexts/LanguageContext';
 
+// See audit finding P09 -- this page presented a static "AI Status" panel
+// (hardcoded "Active" / "Good" / "2 hours ago") and hardcoded rules as if a
+// real recommendation engine were actively monitoring live ad performance.
+// No such engine exists yet -- it needs real ad-performance data, which in
+// turn needs a connected ad account (tracked separately). The approve/reject
+// actions below are real (they update local state), but the sample
+// recommendations and the "AI Status" panel are illustrative, and now say so.
 export function AIOptimizer() {
   const { t } = useLanguage();
   const { recommendations, approveRecommendation, rejectRecommendation } = useDemo();
@@ -54,6 +61,11 @@ export function AIOptimizer() {
         </div>
       </div>
 
+      <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 text-blue-800 text-sm rounded-lg p-3">
+        <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <span>Sample recommendations -- real monitoring turns on once your ad account is connected and has real performance data to analyze.</span>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -89,19 +101,19 @@ export function AIOptimizer() {
         </div>
 
         <div>
-          <Card title="AI Status" subtitle="System health">
+          <Card title="AI Status" subtitle="Not yet connected">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Model</span>
-                <Badge variant="success">Active</Badge>
+                <Badge variant="warning">Sample data</Badge>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Data Quality</span>
-                <span className="text-sm font-medium">Good</span>
+                <span className="text-sm text-gray-600">Ad account</span>
+                <span className="text-sm font-medium">Not connected</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Last Analysis</span>
-                <span className="text-sm text-gray-500">2 hours ago</span>
+                <span className="text-sm text-gray-500">--</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Confidence Threshold</span>
@@ -110,7 +122,7 @@ export function AIOptimizer() {
             </div>
           </Card>
 
-          <Card title="Rules Engine" subtitle="Auto-rules" className="mt-4">
+          <Card title="Rules Engine" subtitle="Will run once connected" className="mt-4">
             <div className="space-y-3">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5" />
