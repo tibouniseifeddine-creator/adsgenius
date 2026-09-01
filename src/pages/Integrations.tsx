@@ -6,6 +6,11 @@ import { Badge } from '../components/ui/Badge';
 import { useDemo } from '../contexts/DemoContext';
 import { useLanguage } from '../contexts/LanguageContext';
 
+// See audit finding P21 -- Refresh/Connect/Configure had no onClick, and the
+// "Coming Soon" card was fully clickable despite doing nothing. There is no
+// real OAuth/connection flow to any of these providers yet, so every card
+// here is a simulation regardless of its displayed status. The buttons are
+// now disabled (rather than silently inert) so that's clear at a glance.
 export function Integrations() {
   const { t } = useLanguage();
   const { integrations } = useDemo();
@@ -39,8 +44,8 @@ export function Integrations() {
                 <span>{integration.status === 'mock' ? 'Simulation mode active' : 'Connected'}</span>
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm"><RefreshCw className="w-4 h-4" /></Button>
-                <Button variant="secondary" size="sm">{integration.status === 'mock' ? 'Connect' : 'Configure'}</Button>
+                <Button variant="ghost" size="sm" disabled title="No real connection to refresh yet"><RefreshCw className="w-4 h-4" /></Button>
+                <Button variant="secondary" size="sm" disabled title="Real account connection is coming soon">{integration.status === 'mock' ? 'Connect' : 'Configure'}</Button>
               </div>
             </div>
             {integration.lastSync && (
@@ -54,7 +59,7 @@ export function Integrations() {
             <Plug className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="font-medium text-gray-500">Add New Integration</p>
             <p className="text-sm text-gray-400 mt-1">Shopify, TikTok, WhatsApp Business</p>
-            <Button variant="secondary" className="mt-4">Coming Soon</Button>
+            <Button variant="secondary" className="mt-4" disabled>Coming Soon</Button>
           </div>
         </Card>
       </div>
