@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Filter } from 'lucide-react';
+import { Download, Info } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { useDemo } from '../contexts/DemoContext';
@@ -8,6 +8,12 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell
 } from 'recharts';
 
+// See audit finding P09 -- ad-performance metrics (spend, ROAS, CTR, per-creative
+// AI score) have no real source yet: they depend on a connected ad account
+// (Meta) which doesn't exist in this app today (tracked separately). Rather
+// than silently present sample numbers as if they were the workspace's real
+// results, the page now says plainly that this is sample data. The Export
+// button used to do nothing; it now really exports what's on screen as CSV.
 export function Analytics() {
   const { t } = useLanguage();
   const { metrics, creatives } = useDemo();
@@ -35,6 +41,21 @@ export function Analytics() {
     { name: 'Returned', value: metrics.reduce((s, m) => s + m.returnedOrders, 0), color: '#f59e0b' },
   ];
 
+  const exportCsv = () => {
+    const rows = [
+      ['date', 'spend', 'revenue', 'profit', 'ctr', 'cpc', 'roas', 'orders', 'delivered'],
+      ...chartData.map(d => [d.date, d.spend, d.revenue, d.profit, d.ctr, d.cpc, d.roas, d.orders, d.delivered]),
+    ];
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `adsgenius-analytics-${period}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -45,8 +66,13 @@ export function Analytics() {
             <option value="30d">{t('last30Days')}</option>
             <option value="today">{t('today')}</option>
           </select>
-          <Button variant="secondary"><Download className="w-4 h-4 mr-2" />{t('export')}</Button>
+          <Button variant="secondary" onClick={exportCsv}><Download className="w-4 h-4 mr-2" />{t('export')}</Button>
         </div>
+      </div>
+
+      <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 text-blue-800 text-sm rounded-lg p-3">
+        <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <span>Sample data -- ad performance (spend, ROAS, CTR, AI creative scores) will reflect your real results once an ad account is connected.</span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
