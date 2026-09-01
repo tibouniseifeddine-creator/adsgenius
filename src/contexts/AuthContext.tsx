@@ -11,6 +11,10 @@ interface AuthContextType {
   isAuthenticated: boolean;
   loading: boolean;
   error: string | null;
+  // Lets Settings.tsx push the freshly-saved workspace back into context right
+  // after a successful PATCH /api/workspace, so the rest of the app sees the
+  // change immediately without a second round trip. See audit finding P22.
+  updateBusiness: (business: Business) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,6 +26,19 @@ const TOKEN_KEY = 'adsgenius_token';
 
 function mapUser(apiUser: any): User {
   return { id: apiUser.id, email: apiUser.email, name: apiUser.name, role: 'owner', businessId: apiUser.id };
+}
+
+// See audit finding P22 -- `business` used to be declared but never actually
+// populated from anywhere, so every real user's Settings page silently showed
+// blank fields. GET/PATCH /api/workspace now back it for real.
+function mapWorkspace(apiWorkspace: any): Business {
+  return {
+    id: apiWorkspace.id,
+    name: apiWorkspace.name,
+    country: apiWorkspace.country,
+    currency: apiWorkspace.currency,
+    timezone: apiWorkspace.timezone,
+  };
 }
 
 function tokenExpiresAt(token: string): number | null {
@@ -51,12 +68,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return data;
   };
 
+  // Best-effort -- a failed workspace load shouldn't block the rest of the
+  // app; Settings.tsx already handles `business` being briefly null.
+  const loadBusiness = () => {
+    authenticate('/api/workspace').then(data => setBusiness(mapWorkspace(data.workspace))).catch(() => {});
+  };
+
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) { setLoading(false); return; }
     const expiresAt = tokenExpiresAt(token);
     if (expiresAt !== null && expiresAt <= Date.now()) { clearSession(); setLoading(false); return; }
     authenticate('/api/auth/me').then(data => setUser(mapUser(data.user))).catch(() => clearSession()).finally(() => setLoading(false));
+    loadBusiness();
   }, []);
 
   useEffect(() => {
@@ -75,15 +99,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string) => {
     setError(null);
-    try { const data = await authenticate('/api/auth/login', { email, password }); saveToken(data.token); setUser(mapUser(data.user)); }
+    try { const data = await authenticate('/api/auth/login', { email, password }); saveToken(data.token); setUser(mapUser(data.user)); loadBusiness(); }
     catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
   };
 
   const register = async (data: RegisterData) => {
     setError(null);
-    try { const result = await authenticate('/api/auth/register', data); saveToken(result.token); setUser(mapUser(result.user)); }
+    try { const result = await authenticate('/api/auth/register', data); saveToken(result.token); setUser(mapUser(result.user)); loadBusiness(); }
     catch (e) { const message = e instanceof Error ? e.message : 'Registration failed'; setError(message); throw e; }
   };
+
+  const updateBusiness = (updated: Business) => setBusiness(updated);
 
   // Clears the local session immediately (so the UI feels instant even
   // offline), then best-effort tells the server to revoke this exact token
@@ -97,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       fetch(`${API_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
     }
   };
-  return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error, updateBusiness }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
