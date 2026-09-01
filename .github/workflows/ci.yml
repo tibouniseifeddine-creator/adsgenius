@@ -1,0 +1,49 @@
+name: AdsGenius CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'phase-*'
+      - 'fix/**'
+      - 'feat/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck production API entrypoint (api/index.ts)
+        run: npx tsc --noEmit -p tsconfig.api.json
+
+      - name: Verify api/index.ts and backend/src/server.ts are in sync
+        run: |
+          if ! diff -u api/index.ts backend/src/server.ts; then
+            echo ""
+            echo "::error::api/index.ts (deployed by Vercel) and backend/src/server.ts (local dev entrypoint) have drifted apart -- see diff above. These two files must stay byte-identical. Copy whichever one has the intended change over the other and commit again."
+            exit 1
+          fi
+
+      - name: Build application
+        run: npm run build
