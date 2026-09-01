@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -13,8 +13,12 @@ import { Product } from '../types';
 // AI analysis is not implemented in the backend yet, so `analysis` is always
 // undefined for real data today; that correctly falls through to the existing
 // "Analyze with AI" empty state below rather than showing fabricated numbers.
+// See audit finding P21 -- both buttons below used to have no onClick at all.
+// They now send you to Creative Studio, which already runs real AI analysis
+// (photo + product info -> angles, audience, ad concepts) for this product.
 export function ProductAnalysis() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +72,7 @@ export function ProductAnalysis() {
       <div className="text-center py-20">
         <Wand2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
         <p className="text-gray-500">{t('analyzeWithAI')}</p>
-        <Button className="mt-4"><Wand2 className="w-4 h-4 mr-2" />{t('analyzeWithAI')}</Button>
+        <Button className="mt-4" onClick={() => navigate('/creative-studio')}><Wand2 className="w-4 h-4 mr-2" />{t('analyzeWithAI')}</Button>
       </div>
     );
   }
@@ -77,7 +81,7 @@ export function ProductAnalysis() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">{t('productAnalysis')}: {product.name}</h1>
-        <Button variant="secondary"><Wand2 className="w-4 h-4 mr-2" />{t('generateCreatives')}</Button>
+        <Button variant="secondary" onClick={() => navigate('/creative-studio')}><Wand2 className="w-4 h-4 mr-2" />{t('generateCreatives')}</Button>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title={t('product')} subtitle={product.sku}>
