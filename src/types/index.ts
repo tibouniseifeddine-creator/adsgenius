@@ -9,13 +9,16 @@ export interface User {
   businessId: string;
 }
 
+// Mirrors the real fields GET/PATCH /api/workspace return -- see audit
+// finding P22. Previously had a "type"/"language" pair that never matched
+// any real backend data (dropped here; language is already handled by
+// useLanguage(), not by this object).
 export interface Business {
   id: string;
   name: string;
-  type: string;
   country: string;
   currency: string;
-  language: Language;
+  timezone: string;
 }
 
 export interface Product {
