@@ -42,6 +42,26 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
   return next(err);
 });
 
+// Basic security headers -- part of hardening this ahead of putting real
+// customer data behind it (see audit follow-up "technical security").
+// Deliberately dependency-free (no helmet package): this is a JSON API, not
+// an HTML server, so the handful of headers that actually matter here are
+// response-sniffing/framing/referrer/transport protections, not a
+// content-security-policy meant for inline scripts and stylesheets.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  // 'cross-origin', not 'same-site': FRONTEND_ORIGIN explicitly supports a
+  // frontend on a different domain (see .env.example) -- CORS above is
+  // already the real access-control layer for that, and CORP:same-site
+  // would silently break a legitimately CORS-allowed cross-site frontend.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
+
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // must match the JWT's own expiresIn below
 
 function hashToken(token: string): string {
@@ -170,6 +190,10 @@ const LOGIN_DUMMY_HASH = '$2b$12$CwTycUXWue0Thq9StjUM0uJ8vSdpS4dQi2AAdxxRs4hpMD9
 
 const LOGIN_IP_LIMIT = { max: 20, windowMs: 15 * 60 * 1000 };
 const LOGIN_EMAIL_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
+// See audit follow-up "technical security" -- registration had no rate
+// limit at all (unlike login, just above), so nothing stopped a script from
+// spamming account/workspace creation. Same per-IP shape as login's.
+const REGISTER_IP_LIMIT = { max: 8, windowMs: 60 * 60 * 1000 };
 const PUBLIC_ORDER_IP_LIMIT = { max: 10, windowMs: 10 * 60 * 1000 };
 const AI_WORKSPACE_LIMIT = { max: 40, windowMs: 60 * 60 * 1000 };
 
@@ -206,6 +230,9 @@ const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 app.post('/api/auth/register', async (req, res) => {
   try {
+    if (!checkRateLimit(`register:ip:${clientIp(req)}`, REGISTER_IP_LIMIT.max, REGISTER_IP_LIMIT.windowMs)) {
+      return rateLimited(res, 60);
+    }
     getJwtSecret();
     const db = getPrisma();
     const { email, password, name, businessName } = req.body as Record<string, string>;
@@ -409,6 +436,62 @@ function metaConfigured(): boolean {
   return !!(META_APP_ID && META_APP_SECRET && META_REDIRECT_URI);
 }
 
+// See audit follow-up "technical security" -- a Meta access token grants
+// real read access to a customer's real ad account for ~60 days. Storing it
+// as plaintext would mean a database leak ALONE (no server compromise
+// needed) exposes every connected customer's ad account, which is not a
+// credible security story for something meant to be sold or trusted with
+// other people's businesses. Encrypted at rest with AES-256-GCM; the key
+// lives only in this server's environment, never in the database.
+//
+// Backward/forward compatible on purpose: if META_TOKEN_ENCRYPTION_KEY isn't
+// set yet, tokens are stored in plaintext (with a loud warning) instead of
+// breaking the Meta connect flow outright -- see .env.example. Once the key
+// is set, every new/refreshed connection is encrypted; a previously-stored
+// plaintext token (no "v1:" prefix) still decrypts fine (returned as-is) and
+// gets re-encrypted the next time that connection is refreshed.
+const META_TOKEN_ENCRYPTION_KEY = process.env.META_TOKEN_ENCRYPTION_KEY?.trim();
+let warnedMissingMetaEncryptionKey = false;
+
+function getMetaEncryptionKey(): Buffer | null {
+  if (!META_TOKEN_ENCRYPTION_KEY) return null;
+  const key = Buffer.from(META_TOKEN_ENCRYPTION_KEY, 'base64');
+  if (key.length !== 32) {
+    throw new Error('META_TOKEN_ENCRYPTION_KEY must be base64 and decode to exactly 32 bytes');
+  }
+  return key;
+}
+
+function encryptMetaToken(plaintext: string): string {
+  const key = getMetaEncryptionKey();
+  if (!key) {
+    if (!warnedMissingMetaEncryptionKey) {
+      console.warn('META_TOKEN_ENCRYPTION_KEY is not set -- Meta access tokens are being stored in plaintext. Set it before connecting real customer ad accounts.');
+      warnedMissingMetaEncryptionKey = true;
+    }
+    return plaintext;
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `v1:${iv.toString('base64')}:${authTag.toString('base64')}:${ciphertext.toString('base64')}`;
+}
+
+function decryptMetaToken(stored: string): string {
+  if (!stored.startsWith('v1:')) return stored; // plaintext -- see comment above
+  const parts = stored.split(':');
+  const key = getMetaEncryptionKey();
+  if (parts.length !== 4 || !key) {
+    throw new Error('Cannot decrypt Meta access token -- META_TOKEN_ENCRYPTION_KEY is missing or was changed');
+  }
+  const [, ivB64, tagB64, dataB64] = parts;
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'));
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+  const plaintext = Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64')), decipher.final()]);
+  return plaintext.toString('utf8');
+}
+
 // Status only -- accessToken never leaves the server.
 app.get('/api/integrations/meta', requireAuth, async (req, res) => {
   try {
@@ -529,7 +612,7 @@ app.get('/api/integrations/meta/callback', async (req, res) => {
       adAccountId: `act_${firstAccount.account_id}`,
       adAccountName: (firstAccount.name as string) ?? null,
       currency: (firstAccount.currency as string) ?? null,
-      accessToken,
+      accessToken: encryptMetaToken(accessToken),
       tokenExpiresAt
     };
     await db.metaConnection.upsert({
@@ -570,7 +653,7 @@ app.get('/api/integrations/meta/insights', requireAuth, async (req, res) => {
     if (!connection) return res.status(404).json({ error: 'No Meta ad account connected' });
 
     const insightsRes = await fetchWithTimeout(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${connection.adAccountId}/insights?fields=spend&date_preset=this_month&access_token=${encodeURIComponent(connection.accessToken)}`,
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${connection.adAccountId}/insights?fields=spend&date_preset=this_month&access_token=${encodeURIComponent(decryptMetaToken(connection.accessToken))}`,
       {}
     );
     const insightsData = await insightsRes.json() as any;
@@ -737,7 +820,7 @@ app.post('/api/campaigns/sync', requireAuth, async (req, res) => {
     const connection = await db.metaConnection.findUnique({ where: { workspaceId } });
     if (!connection) return res.status(404).json({ error: 'No Meta ad account connected' });
 
-    const accessToken = encodeURIComponent(connection.accessToken);
+    const accessToken = encodeURIComponent(decryptMetaToken(connection.accessToken));
     const acct = connection.adAccountId;
 
     async function graphGetAll(path: string, params: string): Promise<any[]> {
