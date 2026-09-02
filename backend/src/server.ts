@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
+import { put as putBlob } from '@vercel/blob';
 
 export const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -171,6 +172,15 @@ const LOGIN_IP_LIMIT = { max: 20, windowMs: 15 * 60 * 1000 };
 const LOGIN_EMAIL_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
 const PUBLIC_ORDER_IP_LIMIT = { max: 10, windowMs: 10 * 60 * 1000 };
 const AI_WORKSPACE_LIMIT = { max: 40, windowMs: 60 * 60 * 1000 };
+
+// See audit finding P05 -- there is no billing/subscription system yet (real
+// paid plans need a payment provider and a merchant account, tracked
+// separately as a deliberately bigger decision). Until then, this is an
+// internal, no-cost ceiling on AI generations per workspace per calendar
+// month, so a single workspace can't run up unbounded AI provider costs.
+// It reuses the AITask audit trail every AI-calling route already writes to
+// (see logAiTask below) -- no new table needed.
+const MONTHLY_AI_TASK_LIMIT = 300;
 
 // Hard cap on the unpaginated list endpoints (products/creatives/creative-packs/
 // audiences/orders) -- see audit finding P23. No workspace is anywhere near this
@@ -377,6 +387,202 @@ app.patch('/api/workspace', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('Update workspace failed:', error);
     return res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
+
+// ==================================================================================
+// ---- Meta (Facebook) Ads integration -- audit finding P04 ----
+// ==================================================================================
+// A real OAuth connection to one Meta ad account per workspace. Scope is
+// intentionally read-only (ads_read): this surfaces the account's real spend
+// so Dashboard.tsx (see P09) can show real ROAS/CAC/CPA instead of "--", and
+// Integrations.tsx can show a real connected account instead of a mock one.
+// Publishing/managing campaigns FROM AdsGenius TO Meta is a separate, larger
+// piece of work (needs a real Campaign/AdSet/Ad schema -- see P08/P03,
+// deliberately deferred) and is NOT part of this.
+const META_GRAPH_VERSION = 'v26.0';
+const META_APP_ID = process.env.META_APP_ID?.trim();
+const META_APP_SECRET = process.env.META_APP_SECRET?.trim();
+const META_REDIRECT_URI = process.env.META_REDIRECT_URI?.trim();
+
+function metaConfigured(): boolean {
+  return !!(META_APP_ID && META_APP_SECRET && META_REDIRECT_URI);
+}
+
+// Status only -- accessToken never leaves the server.
+app.get('/api/integrations/meta', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    const connection = await db.metaConnection.findUnique({ where: { workspaceId } });
+    if (!connection) return res.json({ connected: false, configured: metaConfigured() });
+    return res.json({
+      connected: true,
+      configured: true,
+      adAccountId: connection.adAccountId,
+      adAccountName: connection.adAccountName,
+      connectedAt: connection.connectedAt
+    });
+  } catch (error) {
+    console.error('Load Meta connection failed:', error);
+    return res.status(500).json({ error: 'Failed to load Meta connection status' });
+  }
+});
+
+// Returns the Facebook OAuth dialog URL for the frontend to redirect to.
+app.get('/api/integrations/meta/connect', requireAuth, async (req, res) => {
+  try {
+    if (!metaConfigured()) {
+      return res.status(501).json({ error: 'Meta integration is not configured on this server yet (missing META_APP_ID/META_APP_SECRET/META_REDIRECT_URI)' });
+    }
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    // Signed, short-lived state: Meta redirects the browser straight back to
+    // our /callback route below with no Authorization header, so this is how
+    // that route knows which workspace to attach the connection to, and that
+    // the callback genuinely followed one of our own /connect redirects.
+    const state = jwt.sign({ workspaceId }, getJwtSecret(), { expiresIn: '10m' });
+    const params = new URLSearchParams({
+      client_id: META_APP_ID!,
+      redirect_uri: META_REDIRECT_URI!,
+      state,
+      scope: 'ads_read',
+      response_type: 'code'
+    });
+    return res.json({ url: `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?${params.toString()}` });
+  } catch (error) {
+    console.error('Build Meta OAuth URL failed:', error);
+    return res.status(500).json({ error: 'Failed to start Meta connection' });
+  }
+});
+
+// Meta redirects the user's browser directly to this URL after they approve
+// (or deny) access -- there is no Authorization header on this request, so
+// this route is intentionally public. The signed `state` param (from
+// /connect above) is what ties it back to the right workspace and proves it
+// followed our own redirect rather than being an arbitrary forged request.
+app.get('/api/integrations/meta/callback', async (req, res) => {
+  const frontendOrigin = allowedOrigins && allowedOrigins.length > 0 ? allowedOrigins[0] : '';
+  const redirectWithStatus = (status: 'connected' | 'error', reason?: string) => {
+    const url = new URL(`${frontendOrigin}/integrations`);
+    url.searchParams.set('meta', status);
+    if (reason) url.searchParams.set('meta_error', reason);
+    return res.redirect(url.toString());
+  };
+  try {
+    if (!metaConfigured()) return redirectWithStatus('error', 'not_configured');
+    const code = req.query.code as string | undefined;
+    const state = req.query.state as string | undefined;
+    const oauthError = req.query.error as string | undefined;
+    if (oauthError) return redirectWithStatus('error', 'denied');
+    if (!code || !state) return redirectWithStatus('error', 'missing_params');
+
+    let workspaceId: string;
+    try {
+      const payload = jwt.verify(state, getJwtSecret()) as jwt.JwtPayload;
+      if (!payload.workspaceId) throw new Error('no workspaceId in state');
+      workspaceId = payload.workspaceId as string;
+    } catch {
+      return redirectWithStatus('error', 'invalid_state');
+    }
+
+    // Step 1: authorization code -> short-lived user access token.
+    const tokenRes = await fetchWithTimeout(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?` + new URLSearchParams({
+      client_id: META_APP_ID!, client_secret: META_APP_SECRET!, redirect_uri: META_REDIRECT_URI!, code
+    }), {});
+    const tokenData = await tokenRes.json() as any;
+    if (!tokenRes.ok || !tokenData.access_token) {
+      console.error('Meta token exchange failed:', tokenData);
+      return redirectWithStatus('error', 'token_exchange_failed');
+    }
+
+    // Step 2: short-lived -> long-lived token (~60 days) so the connection
+    // doesn't need re-authorizing constantly.
+    const longLivedRes = await fetchWithTimeout(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?` + new URLSearchParams({
+      grant_type: 'fb_exchange_token', client_id: META_APP_ID!, client_secret: META_APP_SECRET!, fb_exchange_token: tokenData.access_token
+    }), {});
+    const longLivedData = await longLivedRes.json() as any;
+    const accessToken = longLivedRes.ok && longLivedData.access_token ? longLivedData.access_token : tokenData.access_token;
+    const expiresInSeconds = longLivedRes.ok && typeof longLivedData.expires_in === 'number'
+      ? longLivedData.expires_in
+      : (typeof tokenData.expires_in === 'number' ? tokenData.expires_in : null);
+    const tokenExpiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
+
+    // Step 3: pick the first ad account this Meta user manages. Choosing
+    // between several, for a user who manages more than one, is a follow-up
+    // once this MVP connection is actually in use -- see the schema comment.
+    const accountsRes = await fetchWithTimeout(
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/me/adaccounts?fields=name,account_id,currency&access_token=${encodeURIComponent(accessToken)}`,
+      {}
+    );
+    const accountsData = await accountsRes.json() as any;
+    const firstAccount = accountsRes.ok ? accountsData?.data?.[0] : null;
+    if (!firstAccount) {
+      console.error('No Meta ad account found for this user:', accountsData);
+      return redirectWithStatus('error', 'no_ad_account');
+    }
+
+    const db = getPrisma();
+    const connectionData = {
+      adAccountId: `act_${firstAccount.account_id}`,
+      adAccountName: (firstAccount.name as string) ?? null,
+      currency: (firstAccount.currency as string) ?? null,
+      accessToken,
+      tokenExpiresAt
+    };
+    await db.metaConnection.upsert({
+      where: { workspaceId },
+      create: { workspaceId, ...connectionData },
+      update: connectionData
+    });
+
+    return redirectWithStatus('connected');
+  } catch (error) {
+    console.error('Meta OAuth callback failed:', error);
+    return redirectWithStatus('error', 'unexpected');
+  }
+});
+
+app.delete('/api/integrations/meta', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    await db.metaConnection.deleteMany({ where: { workspaceId } });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Disconnect Meta failed:', error);
+    return res.status(500).json({ error: 'Failed to disconnect Meta' });
+  }
+});
+
+// Real account-level spend for the current month -- used by Dashboard.tsx
+// (see audit finding P09) now that a real ad account can actually be
+// connected. Account-level only for now, same reasoning as above.
+app.get('/api/integrations/meta/insights', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    const connection = await db.metaConnection.findUnique({ where: { workspaceId } });
+    if (!connection) return res.status(404).json({ error: 'No Meta ad account connected' });
+
+    const insightsRes = await fetchWithTimeout(
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/${connection.adAccountId}/insights?fields=spend&date_preset=this_month&access_token=${encodeURIComponent(connection.accessToken)}`,
+      {}
+    );
+    const insightsData = await insightsRes.json() as any;
+    if (!insightsRes.ok) {
+      console.error('Meta insights fetch failed:', insightsData);
+      return res.status(502).json({ error: 'Failed to fetch Meta ad spend -- the connection may need to be reconnected' });
+    }
+    const spend = Number(insightsData?.data?.[0]?.spend) || 0;
+    return res.json({ spend, currency: connection.currency ?? 'USD', adAccountName: connection.adAccountName });
+  } catch (error) {
+    console.error('Meta insights failed:', error);
+    return res.status(500).json({ error: 'Failed to fetch Meta ad spend' });
   }
 });
 
@@ -657,6 +863,8 @@ app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const body = req.body as Record<string, unknown>;
     const language = body.language === 'fr' || body.language === 'en' ? body.language : 'ar';
@@ -716,11 +924,10 @@ app.post('/api/creatives/generate-copy', requireAuth, async (req, res) => {
 // async job architecture (a single request here has no time budget for a
 // minutes-long video render) and a chosen video-generation provider.
 //
-// Storage: product photos and generated images are kept as base64 data URLs
-// directly on the CreativePack/CreativePackConcept rows (see storeImage() below) --
-// zero new infrastructure/dependency needed today. Swap storeImage() for a
-// real object-storage upload (e.g. Vercel Blob) later if volume grows; no
-// caller needs to change since they only see a string URL/URI either way.
+// Storage: product photos and generated images are uploaded to Vercel Blob
+// by storeImage() below (see audit finding P28) -- previously they were kept
+// as full base64 data URLs directly on the CreativePack/CreativePackConcept
+// rows, bloating the database and every API response that touched one.
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_CONCEPT_COUNT = 5;
@@ -742,9 +949,26 @@ function parseImageDataUrl(dataUrl: string): { mediaType: string; base64Data: st
   return { mediaType: match[1], base64Data: match[2] };
 }
 
-// MVP image storage -- see the header comment above this section.
-function storeImage(dataUrl: string): string {
-  return dataUrl;
+// Real object storage via Vercel Blob -- see audit finding P28 and the header
+// comment above this section. Falls back to returning the inline data URL
+// unchanged when BLOB_READ_WRITE_TOKEN isn't configured (e.g. a local dev
+// environment with no Blob store attached), and on any upload error, so an
+// image is never lost -- it's just stored the old way for that one request.
+async function storeImage(dataUrl: string): Promise<string> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return dataUrl;
+  try {
+    const { mediaType, base64Data } = parseImageDataUrl(dataUrl);
+    const extension = mediaType.split('/')[1] || 'png';
+    const buffer = Buffer.from(base64Data, 'base64');
+    const blob = await putBlob(`creative-images/${crypto.randomUUID()}.${extension}`, buffer, {
+      access: 'public',
+      contentType: mediaType,
+    });
+    return blob.url;
+  } catch (err) {
+    console.error('Vercel Blob upload failed, falling back to inline data URL:', err);
+    return dataUrl;
+  }
 }
 
 async function loadImageBytes(source: string): Promise<{ buffer: Buffer; mediaType: string }> {
@@ -793,6 +1017,29 @@ async function logAiTask(db: PrismaClient, input: {
   } catch (err) {
     console.error('Failed to log AITask (non-fatal):', err);
   }
+}
+
+// See audit finding P05 -- counts this workspace's AITask rows since the
+// start of the current calendar month (UTC) against MONTHLY_AI_TASK_LIMIT.
+// Fails open (treats the quota as not exceeded) on a DB error so a transient
+// issue here never blocks a real AI request on its own.
+async function checkMonthlyAiQuota(db: PrismaClient, workspaceId: string): Promise<{ ok: boolean; used: number }> {
+  try {
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+    const used = await db.aITask.count({ where: { workspaceId, createdAt: { gte: startOfMonth } } });
+    return { ok: used < MONTHLY_AI_TASK_LIMIT, used };
+  } catch (err) {
+    console.error('Failed to check monthly AI quota (failing open):', err);
+    return { ok: true, used: 0 };
+  }
+}
+
+function quotaExceeded(res: express.Response, used: number) {
+  return res.status(429).json({
+    error: `Monthly AI usage limit reached (${used}/${MONTHLY_AI_TASK_LIMIT} generations this month). This resets at the start of next month. Higher-limit paid plans are coming soon.`
+  });
 }
 
 // Shared Claude caller for every JSON-producing prompt below (analysis,
@@ -1004,6 +1251,8 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const body = req.body as Record<string, unknown>;
     const productName = typeof body.productName === 'string' ? body.productName.trim() : '';
@@ -1029,7 +1278,7 @@ app.post('/api/creative-packs/analyze', requireAuth, async (req, res) => {
       throw err;
     }
 
-    const productImageUrl = storeImage(imageDataUrl);
+    const productImageUrl = await storeImage(imageDataUrl);
     const campaign = await db.creativePack.create({
       data: {
         workspaceId, productName, productImageUrl, category, targetAudience, country, language,
@@ -1054,6 +1303,8 @@ app.post('/api/creative-packs/:id/concepts', requireAuth, async (req, res) => {
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -1110,6 +1361,8 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/regenerate', requireAuth, 
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -1146,6 +1399,8 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/generate-image', requireAu
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const campaign = await db.creativePack.findFirst({ where: { id: req.params.id, workspaceId } });
     if (!campaign) return res.status(404).json({ error: 'CreativePack not found' });
@@ -1167,7 +1422,7 @@ app.post('/api/creative-packs/:id/concepts/:conceptId/generate-image', requireAu
       return res.status(status).json({ error: message });
     }
 
-    const imageUrl = storeImage(generatedDataUrl);
+    const imageUrl = await storeImage(generatedDataUrl);
     const updated = await db.creativePackConcept.update({ where: { id: concept.id }, data: { imageUrl, imageStatus: 'READY' as any, imageError: null } });
     return res.json({ concept: toApiConcept(updated) });
   } catch (error: any) {
@@ -1385,6 +1640,8 @@ app.post('/api/audiences/generate', requireAuth, async (req, res) => {
     const workspaceId = await getUserWorkspaceId(db, userId);
     if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
     if (!checkRateLimit(`ai:${workspaceId}`, AI_WORKSPACE_LIMIT.max, AI_WORKSPACE_LIMIT.windowMs)) return rateLimited(res, 60);
+    const quota = await checkMonthlyAiQuota(db, workspaceId);
+    if (!quota.ok) return quotaExceeded(res, quota.used);
 
     const body = req.body as Record<string, unknown>;
     const language = body.language === 'fr' || body.language === 'en' ? body.language : 'ar';
