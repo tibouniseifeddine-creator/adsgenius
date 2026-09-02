@@ -1,0 +1,28 @@
+# Changelog
+
+This changelog tracks the transition of AdsGenius from a UI/demo-data prototype to a product backed by real data and real integrations. Entries are grouped by the audit finding they close (an internal finding ID, not a public issue tracker) so the reasoning behind each change stays traceable in the code comments.
+
+## 2026-09-02 -- Real campaigns, Campaign Builder, and a technical security pass
+
+- **Campaigns & Campaign Builder (P03/P08):** added real `Campaign`/`AdSet`/`Ad` database tables. The Campaign Builder now reads real products/audiences/creatives and saves a real campaign plan to your account (`POST /api/campaigns`) instead of simulating a "MOCK MODE" launch. A new "Sync from Meta" action (`POST /api/campaigns/sync`) pulls real campaigns, ad sets, ads, and this-month spend/impressions/clicks from a connected Meta ad account, read-only. Publishing a saved plan *to* Meta was deliberately left out of scope -- see `docs/SECURITY.md`.
+- **Technical security hardening:**
+  - Meta access tokens are now encrypted at rest (AES-256-GCM) instead of stored in plaintext.
+  - Added standard security response headers (`X-Frame-Options`, `X-Content-Type-Options`, `Strict-Transport-Security`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Resource-Policy`).
+  - Added per-IP rate limiting to account registration (previously unprotected against spam signups).
+
+## 2026-09-01/02 -- Real Meta integration, storage, and usage limits
+
+- **P04 -- Meta (Facebook) Ads integration:** real OAuth connection to one Meta ad account per workspace, read-only `ads_read` scope. Surfaces real account name, currency, and monthly spend in Integrations and Dashboard.
+- **P28 -- Real image storage:** AI-generated creative images are now stored via Vercel Blob instead of only as inline base64 data (which doesn't scale and bloats every API response that includes an image).
+- **P05 -- Usage limits:** added an internal cap of 300 AI generations per workspace per calendar month (reusing the existing AI task audit trail), pending a real billing/subscription system.
+
+## 2026-09-01 -- Removing fake UI and wiring real data end to end
+
+- **P30:** removed a fake password-recovery flow (email/phone/QR) from the login page that had no backend behind it and would have silently failed to deliver anything to a real user. Replaced with an honest "not available yet" notice.
+- **P21:** audited every page for buttons with no handler or a handler that did nothing. Wired the ones with a real backend behind them (Copywriter, Products -> Creative Studio, Product Analysis); disabled the rest with a clear explanation instead of leaving them silently inert.
+- **P09:** rewired Dashboard, Campaigns, Analytics, Integrations, and the AI Optimizer off `DemoContext`'s fake data and onto real `/api/orders`, `/api/products`, and (once connected) real Meta ad data -- with an explicit "sample data" label anywhere a real data source doesn't exist yet, rather than presenting demo numbers as if they were real.
+- **P22:** completed the account Settings page (profile, workspace, password change) against the real backend.
+
+## Earlier
+
+Foundational work -- authentication, the core Product/Order/Creative/Audience data model, the AI Creative Pack Engine, and the ZR Express courier integration -- predates this changelog's start and is reflected in the current schema and `docs/API.md` rather than itemized here.
