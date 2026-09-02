@@ -20,14 +20,15 @@ const CONFIRMED_LIKE = ['confirmed', 'preparing', 'shipped', 'out_for_delivery',
 // orders. Order-derived numbers (counts, revenue, delivery/cancellation
 // rates) now come from the real GET /api/orders + /api/products endpoints
 // (same ones Orders.tsx and Products.tsx already use). Ad-spend metrics
-// (spend, ROAS, CAC, CPA) have no real source yet -- that needs a connected
-// ad account (tracked separately) -- so they're shown as "--" with a note
-// instead of fabricated numbers.
+// (spend, ROAS, CAC, CPA) now come from a connected Meta ad account (see
+// audit finding P04) when one is connected; otherwise they stay "--" instead
+// of a fabricated number, with a link to go connect one.
 export function Dashboard() {
   const { t } = useLanguage();
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [metaSpend, setMetaSpend] = useState<{ amount: number; currency: string } | null>(null);
 
   useEffect(() => {
     apiFetch<{ orders: Order[] }>('/api/orders')
@@ -35,6 +36,14 @@ export function Dashboard() {
       .catch(() => {})
       .finally(() => setLoading(false));
     apiFetch<{ products: Product[] }>('/api/products').then(data => setProducts(data.products)).catch(() => {});
+    apiFetch<{ connected: boolean }>('/api/integrations/meta')
+      .then(status => {
+        if (!status.connected) return;
+        apiFetch<{ spend: number; currency: string }>('/api/integrations/meta/insights')
+          .then(data => setMetaSpend({ amount: data.spend, currency: data.currency }))
+          .catch(() => {});
+      })
+      .catch(() => {});
   }, []);
 
   const productById = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
@@ -56,6 +65,15 @@ export function Dashboard() {
   const deliveryRate = confirmedOrders > 0 ? ((deliveredOrders.length / confirmedOrders) * 100).toFixed(1) : '0';
   const cancellationRate = totalOrders > 0 ? ((cancelledOrders / totalOrders) * 100).toFixed(1) : '0';
   const costPerDelivered = deliveredOrders.length > 0 ? (cost / deliveredOrders.length).toFixed(0) : '0';
+
+  // Real ad spend only counts toward ROAS/CAC/CPA when it's in the same
+  // currency as order revenue (DZD) -- there's no currency conversion here,
+  // so mixing them would silently produce a wrong number rather than an
+  // honest "--".
+  const spendInDzd = metaSpend && metaSpend.currency === 'DZD' ? metaSpend.amount : null;
+  const deliveredRoas = spendInDzd && spendInDzd > 0 ? (revenue / spendInDzd).toFixed(2) : null;
+  const trueCac = spendInDzd && deliveredOrders.length > 0 ? (spendInDzd / deliveredOrders.length).toFixed(0) : null;
+  const trueCpa = spendInDzd && confirmedOrders > 0 ? (spendInDzd / confirmedOrders).toFixed(0) : null;
 
   // Grouped by real order date -- this replaces the old fake daily
   // spend/revenue series, since there's no real spend series to show yet.
@@ -94,7 +112,7 @@ export function Dashboard() {
         <KPICard title={t('returnedOrders')} value={String(returnedOrders)} icon={<RotateCcw className="w-6 h-6" />} color="amber" />
         <KPICard title={t('revenue')} value={`${revenue.toLocaleString()} DZD`} icon={<TrendingUp className="w-6 h-6" />} color="green" />
         <KPICard title={t('netProfit')} value={`${netProfit.toLocaleString()} DZD`} icon={<Target className="w-6 h-6" />} color="blue" />
-        <KPICard title={t('totalSpend')} value="--" icon={<DollarSign className="w-6 h-6" />} color="blue" />
+        <KPICard title={t('totalSpend')} value={metaSpend ? `${metaSpend.amount.toLocaleString()} ${metaSpend.currency}` : '--'} icon={<DollarSign className="w-6 h-6" />} color="blue" />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2" title="Orders & Revenue" subtitle="By day, from your real orders">
@@ -115,15 +133,15 @@ export function Dashboard() {
           <div className="space-y-3">
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">{t('trueCac')}</span>
-              <span className="font-semibold text-gray-400">--</span>
+              <span className={`font-semibold ${trueCac ? '' : 'text-gray-400'}`}>{trueCac ? `${trueCac} DZD` : '--'}</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">{t('trueCpa')}</span>
-              <span className="font-semibold text-gray-400">--</span>
+              <span className={`font-semibold ${trueCpa ? '' : 'text-gray-400'}`}>{trueCpa ? `${trueCpa} DZD` : '--'}</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">{t('realRoas')}</span>
-              <span className="font-semibold text-gray-400">--</span>
+              <span className={`font-semibold ${deliveredRoas ? 'text-emerald-600' : 'text-gray-400'}`}>{deliveredRoas ? `${deliveredRoas}x` : '--'}</span>
             </div>
             <div className="flex justify-between py-2 border-b border-gray-100">
               <span className="text-gray-500">{t('deliveryRate')}</span>
@@ -138,7 +156,12 @@ export function Dashboard() {
               <span className="font-semibold">{costPerDelivered} DZD</span>
             </div>
           </div>
-          <p className="mt-3 text-xs text-gray-400">Ad spend metrics (CAC, CPA, ROAS) need a connected ad account -- coming soon.</p>
+          {!metaSpend && (
+            <p className="mt-3 text-xs text-gray-400">Ad spend metrics (CAC, CPA, ROAS) need a connected ad account -- connect one in Integrations.</p>
+          )}
+          {metaSpend && metaSpend.currency !== 'DZD' && (
+            <p className="mt-3 text-xs text-gray-400">Your connected ad account bills in {metaSpend.currency}, not DZD, so CAC/CPA/ROAS aren't mixed across currencies here.</p>
+          )}
         </Card>
       </div>
       <Card title="Orders Funnel" subtitle="From placed to delivered, by day">
