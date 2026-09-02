@@ -115,6 +115,7 @@ model Workspace {
   creativePacks      CreativePack[]
   audiences          Audience[]
   metaConnection     MetaConnection?
+  campaigns          Campaign[]
 
   @@map("workspaces")
 }
@@ -194,6 +195,7 @@ model Product {
   creatives             Creative[]
   orders                Order[]
   audiences             Audience[]
+  campaigns             Campaign[]
 
   @@unique([workspaceId, sku])
   @@index([workspaceId, active])
@@ -424,4 +426,87 @@ model MetaConnection {
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@map("meta_connections")
+}
+
+// See audit findings P03/P08 -- Campaigns.tsx used to show only sample data,
+// and the Campaign Builder's final "Launch" step was explicitly a MOCK MODE
+// simulation with no real row saved anywhere. A Campaign here is real either
+// way: source DRAFT is a plan you built and saved (no Meta ID yet, nothing
+// spent), source META_SYNCED is a real campaign pulled in from your
+// connected Meta ad account via POST /api/campaigns/sync (read-only,
+// ads_read scope -- see MetaConnection above). Actually PUBLISHING a DRAFT
+// to Meta (creating it there for real, which can spend real money) is
+// intentionally not built yet -- that needs an explicit decision on
+// write-scope and launch-safety defaults (start paused vs. active) before
+// it's built, and is tracked as separate follow-up work, not part of this.
+enum CampaignSource {
+  DRAFT
+  META_SYNCED
+}
+
+model Campaign {
+  id             String         @id @default(uuid())
+  workspaceId    String         @map("workspace_id")
+  source         CampaignSource @default(DRAFT)
+  metaCampaignId String?        @map("meta_campaign_id")
+  name           String
+  productId      String?        @map("product_id")
+  objective      String?
+  destination    String?
+  budgetType     String?        @map("budget_type")
+  budget         Decimal?       @db.Decimal(12, 2)
+  audienceIds    Json?          @map("audience_ids")
+  creativeIds    Json?          @map("creative_ids")
+  status         String         @default("draft")
+  currency       String?        @db.VarChar(3)
+  spend          Decimal?       @db.Decimal(12, 2)
+  impressions    Int?
+  clicks         Int?
+  lastSyncedAt   DateTime?      @map("last_synced_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product        Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  adSets         AdSet[]
+
+  @@unique([workspaceId, metaCampaignId])
+  @@index([workspaceId, source])
+  @@map("campaigns")
+}
+
+// Read-only cache of a campaign's ad sets, populated by the same sync as
+// Campaign above. Not created for DRAFT campaigns (they have no ad sets
+// until they're actually published to Meta -- see the Campaign comment).
+model AdSet {
+  id           String   @id @default(uuid())
+  campaignId   String   @map("campaign_id")
+  metaAdSetId  String   @map("meta_adset_id")
+  name         String
+  status       String
+  budget       Decimal? @db.Decimal(12, 2)
+  spend        Decimal? @db.Decimal(12, 2)
+  impressions  Int?
+  clicks       Int?
+  lastSyncedAt DateTime @map("last_synced_at")
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads          Ad[]
+
+  @@unique([campaignId, metaAdSetId])
+  @@map("ad_sets")
+}
+
+model Ad {
+  id           String   @id @default(uuid())
+  adSetId      String   @map("ad_set_id")
+  metaAdId     String   @map("meta_ad_id")
+  name         String
+  status       String
+  spend        Decimal? @db.Decimal(12, 2)
+  impressions  Int?
+  clicks       Int?
+  lastSyncedAt DateTime @map("last_synced_at")
+  adSet        AdSet    @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+
+  @@unique([adSetId, metaAdId])
+  @@map("ads")
 }
