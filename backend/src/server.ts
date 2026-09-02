@@ -586,6 +586,263 @@ app.get('/api/integrations/meta/insights', requireAuth, async (req, res) => {
   }
 });
 
+// ==================================================================================
+// ---- Campaigns -- audit findings P03/P08 ----
+// ==================================================================================
+// See the Campaign model comment in schema.prisma. DRAFT campaigns are saved
+// plans built in the Campaign Builder (never sent to Meta); META_SYNCED
+// campaigns are a read-only mirror of what's really running on the
+// connected Meta ad account, refreshed by POST /api/campaigns/sync below.
+// There is deliberately no "publish this draft to Meta" endpoint yet -- see
+// the schema comment for why.
+function toApiCampaign(
+  c: {
+    id: string; source: string; metaCampaignId: string | null; name: string; productId: string | null;
+    objective: string | null; destination: string | null; budgetType: string | null; budget: unknown;
+    audienceIds: unknown; creativeIds: unknown; status: string; currency: string | null; spend: unknown;
+    impressions: number | null; clicks: number | null; lastSyncedAt: Date | null; createdAt: Date;
+  },
+  adSets?: Array<{ id: string; name: string; status: string; spend: unknown; impressions: number | null; clicks: number | null }>
+) {
+  return {
+    id: c.id,
+    source: c.source.toLowerCase(),
+    metaCampaignId: c.metaCampaignId ?? undefined,
+    name: c.name,
+    productId: c.productId ?? undefined,
+    objective: c.objective ?? undefined,
+    destination: c.destination ?? undefined,
+    budgetType: c.budgetType ?? undefined,
+    budget: c.budget != null ? Number(c.budget) : undefined,
+    audienceIds: Array.isArray(c.audienceIds) ? c.audienceIds : [],
+    creativeIds: Array.isArray(c.creativeIds) ? c.creativeIds : [],
+    status: c.status,
+    currency: c.currency ?? undefined,
+    spend: c.spend != null ? Number(c.spend) : undefined,
+    impressions: c.impressions ?? undefined,
+    clicks: c.clicks ?? undefined,
+    lastSyncedAt: c.lastSyncedAt ? c.lastSyncedAt.toISOString() : undefined,
+    createdAt: c.createdAt.toISOString(),
+    adSets: adSets
+      ? adSets.map(a => ({
+          id: a.id, name: a.name, status: a.status,
+          spend: a.spend != null ? Number(a.spend) : undefined,
+          impressions: a.impressions ?? undefined, clicks: a.clicks ?? undefined
+        }))
+      : undefined
+  };
+}
+
+app.get('/api/campaigns', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.json({ campaigns: [] });
+    const rows = await db.campaign.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'desc' },
+      take: LIST_PAGE_CAP,
+      include: { adSets: { orderBy: { name: 'asc' } } }
+    });
+    return res.json({ campaigns: rows.map(c => toApiCampaign(c, c.adSets)) });
+  } catch (error) {
+    console.error('List campaigns failed:', error);
+    return res.status(500).json({ error: 'Failed to load campaigns' });
+  }
+});
+
+// Saves a campaign plan built in the Campaign Builder. This is a real, saved
+// row -- but it is NOT sent to Meta (no real ad account is created or
+// charged). See the schema comment on Campaign for why publishing isn't
+// built yet.
+app.post('/api/campaigns', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const productId = typeof body.productId === 'string' && body.productId.trim() ? body.productId.trim() : null;
+    if (productId) {
+      const product = await db.product.findFirst({ where: { id: productId, workspaceId } });
+      if (!product) return res.status(400).json({ error: 'Product not found' });
+    }
+    const objective = typeof body.objective === 'string' && body.objective.trim() ? body.objective.trim() : null;
+    const destination = typeof body.destination === 'string' && body.destination.trim() ? body.destination.trim() : null;
+    const budgetType = typeof body.budgetType === 'string' && body.budgetType.trim() ? body.budgetType.trim() : null;
+    const budgetNum = Number(body.budget);
+    const audienceIds = Array.isArray(body.audienceIds)
+      ? (body.audienceIds as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [];
+    const creativeIds = Array.isArray(body.creativeIds)
+      ? (body.creativeIds as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [];
+
+    const created = await db.campaign.create({
+      data: {
+        workspaceId,
+        source: 'DRAFT' as any,
+        name,
+        productId,
+        objective,
+        destination,
+        budgetType,
+        budget: Number.isFinite(budgetNum) ? budgetNum : null,
+        audienceIds,
+        creativeIds,
+        status: 'draft'
+      }
+    });
+    return res.status(201).json({ campaign: toApiCampaign(created) });
+  } catch (error) {
+    console.error('Save campaign failed:', error);
+    return res.status(500).json({ error: 'Failed to save campaign' });
+  }
+});
+
+app.delete('/api/campaigns/:id', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(404).json({ error: 'Campaign not found' });
+    const existing = await db.campaign.findFirst({ where: { id: req.params.id, workspaceId } });
+    if (!existing) return res.status(404).json({ error: 'Campaign not found' });
+    if (existing.source === 'META_SYNCED') {
+      return res.status(400).json({ error: 'Synced Meta campaigns reflect your real ad account -- manage them in Meta Ads Manager, not here' });
+    }
+    await db.campaign.delete({ where: { id: existing.id } });
+    return res.status(204).end();
+  } catch (error) {
+    console.error('Delete campaign failed:', error);
+    return res.status(500).json({ error: 'Failed to delete campaign' });
+  }
+});
+
+// Pulls real campaigns/ad sets/ads plus this-month insights from the
+// connected Meta ad account and upserts them locally as source META_SYNCED.
+// Strictly read-only (ads_read scope, same as the rest of the Meta
+// integration -- see P04); nothing here can create, edit, or spend on Meta.
+// Rate-limited so a workspace can't hammer this (and get rate-limited by
+// Meta itself) by clicking Sync repeatedly.
+app.post('/api/campaigns/sync', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const workspaceId = await getUserWorkspaceId(db, (req as any).userId);
+    if (!workspaceId) return res.status(400).json({ error: 'No workspace found for this account' });
+    if (!checkRateLimit(`campaign-sync:${workspaceId}`, 6, 60 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Too many syncs -- please wait a bit before syncing again' });
+    }
+    const connection = await db.metaConnection.findUnique({ where: { workspaceId } });
+    if (!connection) return res.status(404).json({ error: 'No Meta ad account connected' });
+
+    const accessToken = encodeURIComponent(connection.accessToken);
+    const acct = connection.adAccountId;
+
+    async function graphGetAll(path: string, params: string): Promise<any[]> {
+      const results: any[] = [];
+      let url: string | null = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}?${params}&access_token=${accessToken}`;
+      let guard = 0;
+      while (url && guard < 10) {
+        guard += 1;
+        const r = await fetchWithTimeout(url, {});
+        const data = await r.json() as any;
+        if (!r.ok) { console.error(`Meta ${path} sync fetch failed:`, data); break; }
+        if (Array.isArray(data?.data)) results.push(...data.data);
+        url = data?.paging?.next ?? null;
+      }
+      return results;
+    }
+
+    // Account-level insights with a level breakdown return every
+    // campaign/ad set/ad's spend in one call each, instead of one call per
+    // row -- keeps this to 6 Graph API calls regardless of account size.
+    const [campaigns, campaignInsights, adsets, adsetInsights, ads, adInsights] = await Promise.all([
+      graphGetAll(`${acct}/campaigns`, 'fields=id,name,objective,status,daily_budget,lifetime_budget&limit=200'),
+      graphGetAll(`${acct}/insights`, 'level=campaign&fields=campaign_id,spend,impressions,clicks&date_preset=this_month&limit=200'),
+      graphGetAll(`${acct}/adsets`, 'fields=id,campaign_id,name,status,daily_budget&limit=500'),
+      graphGetAll(`${acct}/insights`, 'level=adset&fields=adset_id,spend,impressions,clicks&date_preset=this_month&limit=500'),
+      graphGetAll(`${acct}/ads`, 'fields=id,adset_id,name,status&limit=500'),
+      graphGetAll(`${acct}/insights`, 'level=ad&fields=ad_id,spend,impressions,clicks&date_preset=this_month&limit=500')
+    ]);
+
+    const campaignSpend = new Map(campaignInsights.map((i: any) => [i.campaign_id, i]));
+    const adsetSpend = new Map(adsetInsights.map((i: any) => [i.adset_id, i]));
+    const adSpendMap = new Map(adInsights.map((i: any) => [i.ad_id, i]));
+    const now = new Date();
+    let syncedCampaigns = 0, syncedAdSets = 0, syncedAds = 0;
+
+    for (const c of campaigns) {
+      const insight = campaignSpend.get(c.id);
+      const budgetType = c.daily_budget ? 'daily' : (c.lifetime_budget ? 'lifetime' : null);
+      const budget = c.daily_budget ? Number(c.daily_budget) / 100 : (c.lifetime_budget ? Number(c.lifetime_budget) / 100 : null);
+      const campaignData = {
+        name: c.name as string,
+        objective: (c.objective as string) ?? null,
+        status: String(c.status || '').toLowerCase(),
+        budgetType,
+        budget,
+        currency: connection.currency,
+        spend: insight ? Number(insight.spend) || 0 : null,
+        impressions: insight ? Number(insight.impressions) || 0 : null,
+        clicks: insight ? Number(insight.clicks) || 0 : null,
+        lastSyncedAt: now
+      };
+      const saved = await db.campaign.upsert({
+        where: { workspaceId_metaCampaignId: { workspaceId, metaCampaignId: c.id } },
+        create: { workspaceId, source: 'META_SYNCED' as any, metaCampaignId: c.id, ...campaignData },
+        update: campaignData
+      });
+      syncedCampaigns += 1;
+
+      const campaignAdsets = adsets.filter((a: any) => a.campaign_id === c.id);
+      for (const a of campaignAdsets) {
+        const aInsight = adsetSpend.get(a.id);
+        const adSetData = {
+          name: a.name as string,
+          status: String(a.status || '').toLowerCase(),
+          budget: a.daily_budget ? Number(a.daily_budget) / 100 : null,
+          spend: aInsight ? Number(aInsight.spend) || 0 : null,
+          impressions: aInsight ? Number(aInsight.impressions) || 0 : null,
+          clicks: aInsight ? Number(aInsight.clicks) || 0 : null,
+          lastSyncedAt: now
+        };
+        const savedAdSet = await db.adSet.upsert({
+          where: { campaignId_metaAdSetId: { campaignId: saved.id, metaAdSetId: a.id } },
+          create: { campaignId: saved.id, metaAdSetId: a.id, ...adSetData },
+          update: adSetData
+        });
+        syncedAdSets += 1;
+
+        const adsetAds = ads.filter((ad: any) => ad.adset_id === a.id);
+        for (const ad of adsetAds) {
+          const adInsight = adSpendMap.get(ad.id);
+          const adData = {
+            name: ad.name as string,
+            status: String(ad.status || '').toLowerCase(),
+            spend: adInsight ? Number(adInsight.spend) || 0 : null,
+            impressions: adInsight ? Number(adInsight.impressions) || 0 : null,
+            clicks: adInsight ? Number(adInsight.clicks) || 0 : null,
+            lastSyncedAt: now
+          };
+          await db.ad.upsert({
+            where: { adSetId_metaAdId: { adSetId: savedAdSet.id, metaAdId: ad.id } },
+            create: { adSetId: savedAdSet.id, metaAdId: ad.id, ...adData },
+            update: adData
+          });
+          syncedAds += 1;
+        }
+      }
+    }
+
+    return res.json({ ok: true, synced: { campaigns: syncedCampaigns, adSets: syncedAdSets, ads: syncedAds } });
+  } catch (error) {
+    console.error('Meta campaign sync failed:', error);
+    return res.status(500).json({ error: 'Failed to sync campaigns from Meta' });
+  }
+});
+
 // Translates the DB's Product row into the shape src/types/index.ts already expects
 // on the frontend (purchaseCost/sellingPrice/deliveryCost naming, images/videos as
 // empty arrays since there's no asset storage yet). This keeps today's patch small:
