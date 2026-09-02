@@ -114,6 +114,7 @@ model Workspace {
   aiTasks            AITask[]
   creativePacks      CreativePack[]
   audiences          Audience[]
+  metaConnection     MetaConnection?
 
   @@map("workspaces")
 }
@@ -400,4 +401,27 @@ model AIUsage {
   task         AITask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@map("ai_usage")
+}
+
+// See audit finding P04 -- a real (not mock) connection to one Meta ad
+// account per workspace, set up via OAuth (GET /api/integrations/meta/connect
+// + /callback below). accessToken is a long-lived user token from Meta's own
+// token exchange; it is never returned to the frontend, only used
+// server-side to call the Marketing API for account name + spend insights.
+// One ad account per workspace for now -- picking which of several ad
+// accounts to use, and campaign-level (not just account-level) data, is
+// follow-up work once this MVP connection is in use.
+model MetaConnection {
+  id             String    @id @default(uuid())
+  workspaceId    String    @unique @map("workspace_id")
+  adAccountId    String    @map("ad_account_id")
+  adAccountName  String?   @map("ad_account_name")
+  currency       String?   @db.VarChar(3)
+  accessToken    String    @map("access_token")
+  tokenExpiresAt DateTime? @map("token_expires_at")
+  connectedAt    DateTime  @default(now()) @map("connected_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("meta_connections")
 }
