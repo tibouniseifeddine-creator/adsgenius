@@ -81,18 +81,26 @@ model InfrastructureState {
 }
 
 model User {
-  id           String            @id @default(uuid())
-  email        String            @unique
-  passwordHash String            @map("password_hash")
-  name         String
-  locale       String            @default("en")
-  timezone     String            @default("UTC")
-  createdAt    DateTime          @default(now()) @map("created_at")
-  updatedAt    DateTime          @updatedAt @map("updated_at")
-  memberships  WorkspaceMember[]
-  sessions     AuthSession[]
-  auditLogs    AuditLog[]
-  aiTasks      AITask[]
+  id                     String            @id @default(uuid())
+  email                  String            @unique
+  passwordHash           String            @map("password_hash")
+  name                   String
+  locale                 String            @default("en")
+  timezone               String            @default("UTC")
+  // Two-factor authentication (TOTP) -- see audit finding P12. twoFactorSecret
+  // is encrypted at rest (AES-256-GCM, same scheme as Meta access tokens) and
+  // stays null until /api/auth/2fa/setup generates one; twoFactorEnabled only
+  // flips true after /api/auth/2fa/verify confirms the app is actually
+  // working, so a half-finished setup can never lock the account owner out.
+  twoFactorEnabled       Boolean           @default(false) @map("two_factor_enabled")
+  twoFactorSecret        String?           @map("two_factor_secret")
+  twoFactorRecoveryCodes Json?             @map("two_factor_recovery_codes")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+  memberships            WorkspaceMember[]
+  sessions               AuthSession[]
+  auditLogs              AuditLog[]
+  aiTasks                AITask[]
 
   @@map("users")
 }
