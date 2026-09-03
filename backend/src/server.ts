@@ -248,12 +248,21 @@ app.post('/api/auth/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const slug = `${businessName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workspace'}-${Date.now()}`;
+    // Prisma's interactive-transaction default (maxWait 2s to get a connection,
+    // timeout 5s to finish) is comfortably enough for these three inserts on a
+    // warm connection, but too tight right after a serverless Postgres compute
+    // that had scaled to zero wakes back up (Neon, in particular) -- that cold
+    // start alone can take longer than 5s, which aborts the transaction with a
+    // P2028 "Transaction already closed" error and turns an otherwise-successful
+    // registration into a false failure. Both limits are raised well past any
+    // realistic cold-start delay; a transaction that is still running after 10s
+    // to acquire a connection or 20s total is a real problem, not a cold start.
     const user = await db.$transaction(async tx => {
       const created = await tx.user.create({ data: { email: normalizedEmail, passwordHash, name } });
       const workspace = await tx.workspace.create({ data: { name: businessName, slug } });
       await tx.workspaceMember.create({ data: { workspaceId: workspace.id, userId: created.id, role: 'OWNER' } });
       return created;
-    });
+    }, { maxWait: 10000, timeout: 20000 });
     return res.status(201).json({ user: await userResponse(user.id), token: await tokenFor(db, user.id) });
   } catch (error) {
     console.error('Registration failed:', error);
