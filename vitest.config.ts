@@ -25,7 +25,16 @@ export default defineConfig({
       META_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
       FRONTEND_ORIGIN: 'http://localhost:5173'
     },
-    testTimeout: 15000,
+    // 15s was tight for the two-factor login-flow integration test: those
+    // tests each make 7-9 real sequential HTTP round trips through Express
+    // -> Prisma -> Postgres (register, workspace lookup, 2FA setup, two
+    // verify attempts, login, two login-verify attempts, /me), and two of
+    // them do it twice for bcrypt password hashing/comparison as well.
+    // Against a real remote database (especially a small disposable test
+    // branch, per docs/TESTING.md) that's easily 20-30s of genuine work, not
+    // a hang -- raised to 30s so those tests get enough room to actually
+    // finish instead of being killed mid-flight.
+    testTimeout: 30000,
     include: ['backend/src/__tests__/**/*.test.ts'],
     // Vitest runs each test FILE in its own worker process by default. Both
     // integration test files import api/index.ts, which lazily creates its
