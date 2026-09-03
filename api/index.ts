@@ -3,7 +3,7 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { put as putBlob } from '@vercel/blob';
 
 export const app = express();
@@ -285,11 +285,79 @@ app.post('/api/auth/login', async (req, res) => {
     // the compare entirely when !user) was the actual side channel.
     const passwordValid = await bcrypt.compare(password, user?.passwordHash ?? LOGIN_DUMMY_HASH);
     if (!user || !passwordValid) return res.status(401).json({ error: 'Invalid email or password' });
+
+    // Password is correct. If this account has 2FA enabled, don't issue a
+    // real session yet -- hand back a short-lived, single-purpose token that
+    // only /api/auth/2fa/login-verify will accept, and require the second
+    // factor before an AuthSession is ever created. See audit finding P12.
+    if (user.twoFactorEnabled) {
+      const pendingToken = jwt.sign({ sub: user.id, purpose: '2fa-pending' }, getJwtSecret(), { expiresIn: '5m' });
+      return res.json({ twoFactorRequired: true, pendingToken });
+    }
+
     return res.json({ user: await userResponse(user.id), token: await tokenFor(db, user.id) });
   } catch (error) {
     console.error('Login failed:', error);
     const message = error instanceof Error ? error.message : 'Login failed';
     return res.status(500).json({ error: message });
+  }
+});
+
+// Step 2 of logging in when 2FA is enabled: exchanges the short-lived
+// pendingToken from /api/auth/login above for a real session, after
+// checking either a current TOTP code or an unused recovery code.
+// Deliberately outside requireAuth -- the caller isn't logged in yet, that's
+// the whole point of this endpoint. Rate-limited by both IP and by the
+// pending token itself (hashed, same as session tokens), since a 6-digit
+// code is brute-forceable in isolation if unlimited attempts were allowed.
+app.post('/api/auth/2fa/login-verify', async (req, res) => {
+  try {
+    const { pendingToken, code, recoveryCode } = req.body as Record<string, string>;
+    if (!pendingToken || (!code && !recoveryCode)) {
+      return res.status(400).json({ error: 'pendingToken and either code or recoveryCode are required' });
+    }
+    if (
+      !checkRateLimit(`2fa:ip:${clientIp(req)}`, TWO_FA_VERIFY_IP_LIMIT.max, TWO_FA_VERIFY_IP_LIMIT.windowMs) ||
+      !checkRateLimit(`2fa:token:${hashToken(pendingToken)}`, TWO_FA_VERIFY_TOKEN_LIMIT.max, TWO_FA_VERIFY_TOKEN_LIMIT.windowMs)
+    ) {
+      return rateLimited(res, 60);
+    }
+
+    let userId: string;
+    try {
+      const payload = jwt.verify(pendingToken, getJwtSecret()) as jwt.JwtPayload;
+      if (payload.purpose !== '2fa-pending' || typeof payload.sub !== 'string') throw new Error('wrong token purpose');
+      userId = payload.sub;
+    } catch {
+      return res.status(401).json({ error: 'Login session expired -- please log in again' });
+    }
+
+    const db = getPrisma();
+    const user = await db.user.findUnique({ where: { id: userId } });
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    let ok = false;
+    if (code) {
+      ok = verifyTotp(decryptMetaToken(user.twoFactorSecret), code);
+    } else if (recoveryCode) {
+      const hashed = hashToken(recoveryCode.trim().toUpperCase());
+      const stored = Array.isArray(user.twoFactorRecoveryCodes)
+        ? (user.twoFactorRecoveryCodes as unknown[]).filter((v): v is string => typeof v === 'string')
+        : [];
+      if (stored.includes(hashed)) {
+        ok = true;
+        // Recovery codes are single-use -- remove it immediately so it can't be replayed.
+        await db.user.update({ where: { id: user.id }, data: { twoFactorRecoveryCodes: stored.filter(h => h !== hashed) } });
+      }
+    }
+    if (!ok) return res.status(401).json({ error: 'Invalid code' });
+
+    return res.json({ user: await userResponse(user.id), token: await tokenFor(db, user.id) });
+  } catch (error) {
+    console.error('2FA login verify failed:', error);
+    return res.status(500).json({ error: 'Failed to verify two-factor code' });
   }
 });
 
@@ -361,6 +429,224 @@ async function requireAuth(req: express.Request, res: express.Response, next: ex
     return res.status(401).json({ error: 'Unauthorized' });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Two-factor authentication (TOTP, RFC 6238) -- see audit finding P12.
+// Implemented with Node's built-in `crypto` (HMAC-SHA1) rather than a new npm
+// dependency, the same approach already used for Meta token encryption
+// above (encryptMetaToken/decryptMetaToken are reused here to encrypt the
+// TOTP secret at rest -- the "Meta" in their name is historical, they're a
+// generic AES-256-GCM string encrypt/decrypt pair). Uses the standard
+// 6-digit, 30-second parameters and otpauth:// URI format every mainstream
+// authenticator app (Google Authenticator, Authy, 1Password, etc.) expects.
+// ---------------------------------------------------------------------------
+
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+export function base32Encode(buffer: Buffer): string {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (let i = 0; i < buffer.length; i++) {
+    value = (value << 8) | buffer[i];
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return output;
+}
+
+export function base32Decode(input: string): Buffer {
+  const clean = input.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const char of clean) {
+    const idx = BASE32_ALPHABET.indexOf(char);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+const TOTP_STEP_SECONDS = 30;
+const TOTP_DIGITS = 6;
+
+export function generateTotp(secretBase32: string, forTimeMs: number): string {
+  const counter = Math.floor(forTimeMs / 1000 / TOTP_STEP_SECONDS);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigUInt64BE(BigInt(counter));
+  const key = base32Decode(secretBase32);
+  const hmac = crypto.createHmac('sha1', key).update(counterBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binCode =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  return (binCode % 10 ** TOTP_DIGITS).toString().padStart(TOTP_DIGITS, '0');
+}
+
+// Accepts a code valid for the current 30s step or one step before/after, to
+// tolerate small clock drift between the server and the user's phone -- the
+// same tolerance window used by Google Authenticator-compatible services.
+// Uses a fixed-length timing-safe comparison rather than `===` so a
+// character-by-character timing side channel can't narrow down the code.
+export function verifyTotp(secretBase32: string, code: string): boolean {
+  const trimmed = code.trim();
+  if (!/^\d{6}$/.test(trimmed)) return false;
+  const now = Date.now();
+  for (const stepOffset of [0, -1, 1]) {
+    const candidate = generateTotp(secretBase32, now + stepOffset * TOTP_STEP_SECONDS * 1000);
+    if (crypto.timingSafeEqual(Buffer.from(candidate), Buffer.from(trimmed))) return true;
+  }
+  return false;
+}
+
+export function generateRecoveryCodes(count = 10): string[] {
+  const codes: string[] = [];
+  for (let i = 0; i < count; i++) {
+    // 10 hex chars grouped as XXXXX-XXXXX for readability when typing one in by hand.
+    const raw = crypto.randomBytes(5).toString('hex').toUpperCase();
+    codes.push(`${raw.slice(0, 5)}-${raw.slice(5, 10)}`);
+  }
+  return codes;
+}
+
+const TWO_FA_VERIFY_IP_LIMIT = { max: 15, windowMs: 15 * 60 * 1000 };
+const TWO_FA_VERIFY_TOKEN_LIMIT = { max: 8, windowMs: 15 * 60 * 1000 };
+
+app.get('/api/auth/2fa/status', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const user = await db.user.findUnique({
+      where: { id: (req as any).userId },
+      select: { twoFactorEnabled: true, twoFactorRecoveryCodes: true }
+    });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    const recoveryCodesRemaining = Array.isArray(user.twoFactorRecoveryCodes) ? user.twoFactorRecoveryCodes.length : 0;
+    return res.json({ enabled: user.twoFactorEnabled, recoveryCodesRemaining });
+  } catch (error) {
+    console.error('Load 2FA status failed:', error);
+    return res.status(500).json({ error: 'Failed to load two-factor status' });
+  }
+});
+
+// Step 1 of enabling 2FA: generates a new secret and returns it for the user
+// to add to their authenticator app. Not yet active -- twoFactorEnabled only
+// flips to true once /api/auth/2fa/verify confirms the app actually produces
+// matching codes, so a half-finished setup can never lock anyone out.
+app.post('/api/auth/2fa/setup', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const user = await db.user.findUnique({
+      where: { id: (req as any).userId },
+      select: { id: true, email: true, twoFactorEnabled: true }
+    });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    if (user.twoFactorEnabled) return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
+
+    const secret = base32Encode(crypto.randomBytes(20));
+    await db.user.update({ where: { id: user.id }, data: { twoFactorSecret: encryptMetaToken(secret) } });
+
+    const otpauthUrl = `otpauth://totp/${encodeURIComponent('AdsGenius')}:${encodeURIComponent(user.email)}?secret=${secret}&issuer=${encodeURIComponent('AdsGenius')}&digits=${TOTP_DIGITS}&period=${TOTP_STEP_SECONDS}`;
+    return res.json({ secret, otpauthUrl });
+  } catch (error) {
+    console.error('2FA setup failed:', error);
+    return res.status(500).json({ error: 'Failed to start two-factor setup' });
+  }
+});
+
+// Step 2: confirms the user's authenticator app produces the right code for
+// the secret from /setup, then actually turns 2FA on and issues one-time
+// recovery codes. The codes are returned in plaintext exactly once here --
+// only their hashes are stored, so they cannot be retrieved again later,
+// only regenerated (which invalidates whichever ones weren't used yet).
+app.post('/api/auth/2fa/verify', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const user = await db.user.findUnique({
+      where: { id: (req as any).userId },
+      select: { id: true, twoFactorEnabled: true, twoFactorSecret: true }
+    });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    if (user.twoFactorEnabled) return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
+    if (!user.twoFactorSecret) return res.status(400).json({ error: 'Call /api/auth/2fa/setup first' });
+
+    const { code } = req.body as Record<string, string>;
+    const secret = decryptMetaToken(user.twoFactorSecret);
+    if (!code || !verifyTotp(secret, code)) return res.status(400).json({ error: 'Invalid code' });
+
+    const recoveryCodes = generateRecoveryCodes();
+    await db.user.update({
+      where: { id: user.id },
+      data: { twoFactorEnabled: true, twoFactorRecoveryCodes: recoveryCodes.map(hashToken) }
+    });
+    return res.json({ enabled: true, recoveryCodes });
+  } catch (error) {
+    console.error('2FA verify failed:', error);
+    return res.status(500).json({ error: 'Failed to verify two-factor code' });
+  }
+});
+
+// Requires the current password (same pattern as /api/auth/password) so a
+// stolen/left-open session can't be used to strip 2FA off an account.
+app.post('/api/auth/2fa/disable', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const { password } = req.body as Record<string, string>;
+    if (!password) return res.status(400).json({ error: 'Current password is required' });
+    const user = await db.user.findUnique({ where: { id: (req as any).userId } });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    await db.user.update({
+      where: { id: user.id },
+      data: { twoFactorEnabled: false, twoFactorSecret: null, twoFactorRecoveryCodes: Prisma.DbNull }
+    });
+    return res.json({ enabled: false });
+  } catch (error) {
+    console.error('2FA disable failed:', error);
+    return res.status(500).json({ error: 'Failed to disable two-factor authentication' });
+  }
+});
+
+// Regenerates recovery codes (e.g. after the user has used most of them)
+// without touching whether 2FA itself is on. Requires a valid TOTP code,
+// same as /verify, so a hijacked-but-still-2FA-guarded session can't quietly
+// swap in a fresh set of recovery codes either.
+app.post('/api/auth/2fa/recovery-codes', requireAuth, async (req, res) => {
+  try {
+    const db = getPrisma();
+    const user = await db.user.findUnique({
+      where: { id: (req as any).userId },
+      select: { id: true, twoFactorEnabled: true, twoFactorSecret: true }
+    });
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ error: 'Two-factor authentication is not enabled' });
+    }
+    const { code } = req.body as Record<string, string>;
+    const secret = decryptMetaToken(user.twoFactorSecret);
+    if (!code || !verifyTotp(secret, code)) return res.status(400).json({ error: 'Invalid code' });
+    const recoveryCodes = generateRecoveryCodes();
+    await db.user.update({ where: { id: user.id }, data: { twoFactorRecoveryCodes: recoveryCodes.map(hashToken) } });
+    return res.json({ recoveryCodes });
+  } catch (error) {
+    console.error('2FA recovery code regeneration failed:', error);
+    return res.status(500).json({ error: 'Failed to regenerate recovery codes' });
+  }
+});
 
 // Every user gets exactly one workspace at registration (see /api/auth/register).
 // This resolves it so product/campaign/etc. data is scoped per-account.
