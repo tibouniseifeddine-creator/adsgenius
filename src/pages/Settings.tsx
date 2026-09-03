@@ -6,6 +6,7 @@ import { Input } from '../components/ui/Input';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { apiFetch } from '../lib/api';
+import { TwoFactorCard } from '../components/settings/TwoFactorCard';
 
 export function Settings() {
   const { t, language, setLanguage } = useLanguage();
@@ -149,6 +150,8 @@ export function Settings() {
             <Button variant="secondary" size="sm" onClick={changePassword} loading={savingPassword}>Change Password</Button>
           </div>
         </Card>
+
+        <TwoFactorCard />
       </div>
     </div>
   );
