@@ -1,6 +1,6 @@
 # Testing
 
-AdsGenius uses [Vitest](https://vitest.dev) for its automated test suite, covering the security-sensitive helper functions in the API (`backend/src/__tests__/security-helpers.test.ts`) and, when a database is available, an end-to-end check of registration, login, and cross-workspace data isolation over real HTTP (`backend/src/__tests__/auth-and-isolation.test.ts`).
+AdsGenius uses [Vitest](https://vitest.dev) for its automated test suite, covering the security-sensitive helper functions in the API (`backend/src/__tests__/security-helpers.test.ts`, `backend/src/__tests__/two-factor.test.ts`) and, when a database is available, end-to-end checks over real HTTP of registration, login, cross-workspace data isolation (`backend/src/__tests__/auth-and-isolation.test.ts`), and the full two-factor authentication login flow (`backend/src/__tests__/two-factor-login-flow.test.ts`).
 
 **This test suite was written and reviewed in an environment with no npm registry access, so it could not actually be executed here.** Every test was checked by hand against the real handler code in `api/index.ts` (request/response shapes, status codes, field names) rather than guessed, and each test file was verified to be syntactically valid TypeScript. But "compiles and looks right" is not the same as "passes" -- **please run `npm test` yourself after `npm install`, and treat that as the real confirmation**, not this document.
 
@@ -11,11 +11,11 @@ npm install
 npm test
 ```
 
-This runs every test file. The helper-function tests (`security-helpers.test.ts`) need no database and no external services -- they exercise `hashToken`, `checkRateLimit`, `EMAIL_FORMAT_REGEX`, and the Meta-token AES-256-GCM encrypt/decrypt round trip directly. These should always pass with nothing extra configured.
+This runs every test file. The helper-function tests need no database and no external services: `security-helpers.test.ts` exercises `hashToken`, `checkRateLimit`, `EMAIL_FORMAT_REGEX`, and the Meta-token AES-256-GCM encrypt/decrypt round trip; `two-factor.test.ts` exercises the TOTP implementation directly, including a check against the official RFC 6238 test vectors, plus base32 encode/decode and recovery code generation. These should always pass with nothing extra configured.
 
 ## Running the integration tests (needs a database)
 
-The auth/isolation tests in `auth-and-isolation.test.ts` register real users, log in, create real products and audiences, and assert that one workspace's data is invisible to (and cannot be referenced by) another -- against a real Postgres database, through the real Express app, over real HTTP (via [supertest](https://github.com/ladjs/supertest)).
+The auth/isolation tests in `auth-and-isolation.test.ts` register real users, log in, create real products and audiences, and assert that one workspace's data is invisible to (and cannot be referenced by) another. `two-factor-login-flow.test.ts` enables 2FA on a real account, then drives the full login flow -- password, then a TOTP code or a recovery code -- through `/api/auth/login` and `/api/auth/2fa/login-verify`, including confirming a used recovery code cannot be replayed and that a wrong password still blocks disabling 2FA. Both run against a real Postgres database, through the real Express app, over real HTTP (via [supertest](https://github.com/ladjs/supertest)).
 
 These tests are skipped automatically (`describe.skipIf(!DATABASE_URL)`) when `DATABASE_URL` is not set, so `npm test` still passes with zero setup. To actually run them:
 
@@ -31,7 +31,7 @@ If `DATABASE_URL` is set to something unreachable or with the wrong schema, the 
 
 ## What's covered and what isn't
 
-Covered: password hashing/verification via bcrypt (indirectly, through real register/login calls), JWT-based session tokens, per-IP and per-email rate limiting shape (unit-level), the email format guard, Meta access token encryption at rest, and -- the most important one for a multi-tenant product -- that one workspace's data cannot be read by, or referenced from, another workspace's account, enforced server-side rather than only hidden in the UI.
+Covered: password hashing/verification via bcrypt (indirectly, through real register/login calls), JWT-based session tokens, per-IP and per-email rate limiting shape (unit-level), the email format guard, Meta access token encryption at rest, the TOTP algorithm against RFC 6238's own test vectors, the full two-factor login/disable/recovery-code flow, and -- the most important one for a multi-tenant product -- that one workspace's data cannot be read by, or referenced from, another workspace's account, enforced server-side rather than only hidden in the UI.
 
 Not covered yet: the Meta OAuth connect/sync flow (would need mocking Meta's Graph API), file uploads to Vercel Blob, the ZR Express courier integration, and the AI creative-generation endpoints (would need mocking the Anthropic/OpenAI APIs). These are reasonable next additions but were out of scope for this pass, which focused on the highest-risk paths: authentication and tenant data isolation.
 
