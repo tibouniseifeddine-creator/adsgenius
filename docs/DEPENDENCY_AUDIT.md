@@ -21,6 +21,7 @@ Both only matter when `vite`'s **dev server** is run with `--host` (exposed to t
 | `postcss` | `^8.4.32` | CVE-2023-44270 affects <8.4.31. Already past it. |
 | `express` | `^5.1.0` | The XSS/open-redirect CVEs found (CVE-2024-43796, CVE-2024-29041) were fixed in the 4.x line (4.19-4.20) before 5.0 was released; not applicable to 5.x. |
 | `@prisma/client` / `prisma` | `^6.14.0` | No applicable CVE found for the runtime client at this version at the time of this audit. |
+| `qrcode` (added for 2FA setup, P12) | `^1.5.4` | Snyk's vulnerability database reports zero known direct vulnerabilities across all tracked versions of this package as of this audit. Note: this is the well-established `qrcode` package (`soldair/node-qrcode`, tens of millions of weekly downloads) -- it is unrelated to the similarly-named `text-qrcode`, which does carry a known malicious-code advisory ([GHSA-h5vj-f7r9-w564](https://github.com/advisories/GHSA-h5vj-f7r9-w564)). Double-check the exact package name in `package.json` if this ever needs re-verifying. |
 
 ## Needs your own verification -- ambiguous finding
 
