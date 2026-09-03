@@ -11,10 +11,21 @@ Every endpoint returns `{ error: string }` with a 4xx/5xx status on failure; err
 | Method & path | Purpose |
 |---|---|
 | `POST /api/auth/register` | Create a user + a new workspace (`{ email, password, name, businessName }`). Rate-limited per IP. |
-| `POST /api/auth/login` | `{ email, password }` -> `{ token }`. Rate-limited per IP and per email. |
+| `POST /api/auth/login` | `{ email, password }` -> `{ user, token }`, or `{ twoFactorRequired: true, pendingToken }` if the account has 2FA enabled (see below). Rate-limited per IP and per email. |
 | `GET /api/auth/me` | Current user + workspace, from the bearer token. |
 | `POST /api/auth/logout` | Revokes the current session server-side. |
 | `PATCH /api/auth/password` 🔒 | Change password (`{ currentPassword, newPassword }`). |
+
+## Two-factor authentication (TOTP)
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/auth/2fa/status` 🔒 | `{ enabled, recoveryCodesRemaining }`. |
+| `POST /api/auth/2fa/setup` 🔒 | Generates a new TOTP secret; returns `{ secret, otpauthUrl }` for a QR code / manual entry. Not active until confirmed via `/verify`. 400 if 2FA is already enabled. |
+| `POST /api/auth/2fa/verify` 🔒 | `{ code }` -- confirms the code from `/setup` matches, turns 2FA on, and returns `{ enabled: true, recoveryCodes }`. The recovery codes are shown exactly once and cannot be retrieved again afterward. |
+| `POST /api/auth/2fa/disable` 🔒 | `{ password }` -- requires the current password, same as `PATCH /api/auth/password`. |
+| `POST /api/auth/2fa/recovery-codes` 🔒 | `{ code }` -- regenerates recovery codes (invalidating any unused ones) without touching whether 2FA itself is on. |
+| `POST /api/auth/2fa/login-verify` | Public (by necessity -- the caller isn't logged in yet). `{ pendingToken, code }` or `{ pendingToken, recoveryCode }` -> `{ user, token }`. `pendingToken` comes from `/api/auth/login`'s `twoFactorRequired` response and expires after 5 minutes. Rate-limited per IP and per pending token. |
 
 ## Workspace
 
@@ -104,6 +115,8 @@ Every endpoint returns `{ error: string }` with a 4xx/5xx status on failure; err
 | Login, per IP | 20 / 15 min |
 | Login, per email | 8 / 15 min |
 | Register, per IP | 8 / hour |
+| 2FA login-verify, per IP | 15 / 15 min |
+| 2FA login-verify, per pending token | 8 / 15 min |
 | Public order submission, per IP | 10 / 10 min |
 | AI generation endpoints, per workspace | 40 / hour, plus a 300/calendar-month hard cap |
 | Meta campaign sync, per workspace | 6 / hour |
