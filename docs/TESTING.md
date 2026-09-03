@@ -39,6 +39,10 @@ Vitest runs each test file in its own worker process by default, and each of the
 - Capping Prisma's own client-side pool size for the run, e.g. `DATABASE_URL="...&connection_limit=5" npm test`, so it never tries to open more connections than a small compute can realistically hold.
 - Checking basic TCP reachability independently of Prisma/Node, e.g. in PowerShell: `Test-NetConnection <host> -Port 5432` -- if that succeeds, the network is fine and the issue is purely connection-pool sizing as described above, not a firewall or DNS problem.
 
+### Troubleshooting: a two-factor test times out (`Test timed out in ...ms`)
+
+`two-factor-login-flow.test.ts`'s fuller tests (a complete setup-then-login flow, or a recovery-code login) each make 7-9 real sequential HTTP requests through the Express app, and two of them do a bcrypt password hash/compare on top of that. Against a real remote database -- especially a small disposable test branch -- that is genuinely tens of seconds of real work, not a hang. `vitest.config.ts` sets `testTimeout: 30000` (30s) for exactly this reason. If you still see a timeout after that (a slower machine, a more distant database region, or a smaller compute than the one this suite was tuned against), raise it further, e.g. `testTimeout: 45000`, rather than treating it as a bug in the 2FA code itself -- the equivalent unit tests in `two-factor.test.ts` (no database involved) pass in milliseconds, which is the real check that the TOTP logic itself is correct.
+
 ## What's covered and what isn't
 
 Covered: password hashing/verification via bcrypt (indirectly, through real register/login calls), JWT-based session tokens, per-IP and per-email rate limiting shape (unit-level), the email format guard, Meta access token encryption at rest, the TOTP algorithm against RFC 6238's own test vectors, the full two-factor login/disable/recovery-code flow, and -- the most important one for a multi-tenant product -- that one workspace's data cannot be read by, or referenced from, another workspace's account, enforced server-side rather than only hidden in the UI.
