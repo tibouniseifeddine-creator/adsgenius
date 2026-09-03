@@ -87,6 +87,8 @@ The same backend code exists in two files because Vercel's serverless model and 
 - [`docs/SECURITY.md`](docs/SECURITY.md) -- what's implemented, what's configuration-dependent, and what's explicitly out of scope today.
 - [`docs/API.md`](docs/API.md) -- endpoint reference.
 - [`docs/THIRD_PARTY_SERVICES.md`](docs/THIRD_PARTY_SERVICES.md) -- every external service the product talks to and what data it sees.
+- [`docs/DEPENDENCY_AUDIT.md`](docs/DEPENDENCY_AUDIT.md) -- known-CVE review of pinned dependencies and what to check with `npm audit`.
+- [`docs/TESTING.md`](docs/TESTING.md) -- how to run the automated test suite, including the integration tests that need a database.
 - [`docs/PRIVACY_POLICY.md`](docs/PRIVACY_POLICY.md) and [`docs/TERMS_OF_SERVICE.md`](docs/TERMS_OF_SERVICE.md) -- drafts to adapt and have reviewed by a lawyer before publishing publicly (see the notice at the top of each).
 - [`CHANGELOG.md`](CHANGELOG.md) -- what's shipped, in what order, and why.
 
