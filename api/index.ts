@@ -64,7 +64,7 @@ app.use((_req, res, next) => {
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // must match the JWT's own expiresIn below
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
@@ -128,7 +128,7 @@ async function userResponse(userId: string) {
 // once that infrastructure exists.
 const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
+export function checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
   const now = Date.now();
   // Opportunistic cleanup so the map doesn't grow unbounded in a long-lived warm instance.
   if (Math.random() < 0.01) {
@@ -226,7 +226,7 @@ app.get('/api/health', (_req, res) => {
 // rejecting valid-but-unusual ones) -- just enough to reject registrations
 // like "not-an-email" that a stricter downstream system (Meta OAuth, an
 // email-delivery provider) would bounce anyway. See audit finding P25.
-const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -462,7 +462,7 @@ function getMetaEncryptionKey(): Buffer | null {
   return key;
 }
 
-function encryptMetaToken(plaintext: string): string {
+export function encryptMetaToken(plaintext: string): string {
   const key = getMetaEncryptionKey();
   if (!key) {
     if (!warnedMissingMetaEncryptionKey) {
@@ -478,7 +478,7 @@ function encryptMetaToken(plaintext: string): string {
   return `v1:${iv.toString('base64')}:${authTag.toString('base64')}:${ciphertext.toString('base64')}`;
 }
 
-function decryptMetaToken(stored: string): string {
+export function decryptMetaToken(stored: string): string {
   if (!stored.startsWith('v1:')) return stored; // plaintext -- see comment above
   const parts = stored.split(':');
   const key = getMetaEncryptionKey();
@@ -2473,7 +2473,11 @@ app.post('/api/public/orders', async (req, res) => {
 });
 
 
-if (!process.env.VERCEL) {
+// Also skipped under Vitest (which sets process.env.VITEST): tests import
+// `app` directly and drive it with supertest, which doesn't need a bound
+// port -- actually listening here would leave a real socket open across
+// test runs and could fail with EADDRINUSE.
+if (!process.env.VERCEL && !process.env.VITEST) {
   app.listen(port, () => console.log(`AdsGenius API listening on ${port}`));
 }
 
