@@ -2,10 +2,25 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Business } from '../types';
 
 interface RegisterData { email: string; password: string; name: string; businessName: string }
+// See audit finding P12 -- when the account has 2FA enabled, POST
+// /api/auth/login stops short of a real session and returns
+// { twoFactorRequired: true } instead of a token. `login()` reports that back
+// here so Auth.tsx can show a second-factor step instead of treating it as a
+// failed login.
+interface LoginResult { twoFactorRequired: boolean }
 interface AuthContextType {
   user: User | null;
   business: Business | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  // Completes a login that returned twoFactorRequired: true, using either a
+  // current TOTP code from the user's authenticator app or one unused
+  // recovery code. Throws (and sets `error`) on an invalid/expired code,
+  // exactly like `login` does for a wrong password.
+  verifyTwoFactorLogin: (input: { code?: string; recoveryCode?: string }) => Promise<void>;
+  // Abandons an in-progress two-factor login (e.g. the user wants to go back
+  // and try a different email/password) without waiting for the pending
+  // token to expire on its own.
+  cancelTwoFactorLogin: () => void;
   register: (data: RegisterData) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
@@ -53,6 +68,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [business, setBusiness] = useState<Business | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Set only between a login that returned twoFactorRequired and the matching
+  // call to verifyTwoFactorLogin/cancelTwoFactorLogin. Never persisted --
+  // losing it (e.g. a page refresh mid-flow) just means starting the login
+  // over, which is the same failure mode as an expired pendingToken anyway.
+  const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState<string | null>(null);
 
   const clearSession = () => { localStorage.removeItem(TOKEN_KEY); setUser(null); setBusiness(null); };
 
@@ -97,11 +117,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (expiresAt !== null && expiresAt <= Date.now()) throw new Error('Authentication session expired');
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     setError(null);
-    try { const data = await authenticate('/api/auth/login', { email, password }); saveToken(data.token); setUser(mapUser(data.user)); loadBusiness(); }
-    catch (e) { const message = e instanceof Error ? e.message : 'Login failed'; setError(message); throw e; }
+    try {
+      const data = await authenticate('/api/auth/login', { email, password });
+      if (data.twoFactorRequired) {
+        setPendingTwoFactorToken(data.pendingToken);
+        return { twoFactorRequired: true };
+      }
+      saveToken(data.token);
+      setUser(mapUser(data.user));
+      loadBusiness();
+      return { twoFactorRequired: false };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Login failed';
+      setError(message);
+      throw e;
+    }
   };
+
+  const verifyTwoFactorLogin = async (input: { code?: string; recoveryCode?: string }) => {
+    setError(null);
+    if (!pendingTwoFactorToken) {
+      const message = 'No login in progress -- please enter your email and password again';
+      setError(message);
+      throw new Error(message);
+    }
+    try {
+      const data = await authenticate('/api/auth/2fa/login-verify', { pendingToken: pendingTwoFactorToken, ...input });
+      saveToken(data.token);
+      setUser(mapUser(data.user));
+      loadBusiness();
+      setPendingTwoFactorToken(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Verification failed';
+      setError(message);
+      throw e;
+    }
+  };
+
+  const cancelTwoFactorLogin = () => { setPendingTwoFactorToken(null); setError(null); };
 
   const register = async (data: RegisterData) => {
     setError(null);
@@ -123,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       fetch(`${API_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
     }
   };
-  return <AuthContext.Provider value={{ user, business, login, register, logout, isAuthenticated: !!user, loading, error, updateBusiness }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, business, login, verifyTwoFactorLogin, cancelTwoFactorLogin, register, logout, isAuthenticated: !!user, loading, error, updateBusiness }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
