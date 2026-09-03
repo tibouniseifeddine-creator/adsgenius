@@ -9,6 +9,7 @@ This document describes AdsGenius's actual current security posture -- what's im
 - Login and registration are **rate-limited** independently per IP address and (for login) per email address, so brute-forcing a password or spamming account creation both hit a wall well before they'd succeed.
 - Sessions are **JWTs (7-day expiry)** backed by a server-side `AuthSession` table. The table stores a **SHA-256 hash of the token**, never the token itself, and a session can be revoked server-side (logout) independent of the JWT's own expiry.
 - `JWT_SECRET` is required at startup for any auth-related request; there is no default/fallback secret, so a misconfigured deployment fails closed rather than signing tokens with a guessable key.
+- **Optional two-factor authentication (TOTP, RFC 6238)**, compatible with any standard authenticator app (Google Authenticator, Authy, 1Password, etc.). When enabled, a correct password alone no longer issues a session: `POST /api/auth/login` returns a short-lived (5-minute) single-purpose token instead, and `POST /api/auth/2fa/login-verify` requires either a current 6-digit code or an unused one-time recovery code before a real `AuthSession` is created. The TOTP secret is encrypted at rest with the same AES-256-GCM scheme as Meta access tokens (below); recovery codes are stored only as SHA-256 hashes and shown to the user exactly once, at enable time. Turning 2FA off requires the account's current password, the same as changing it.
 
 ## Multi-tenancy / data isolation
 
@@ -35,7 +36,6 @@ See `docs/THIRD_PARTY_SERVICES.md` for the full list of external services this p
 
 These are tracked, not hidden:
 
-- **No 2FA / MFA.** Password + email is the only login factor today.
 - **No audit log coverage across all sensitive actions** -- `AuditLog` exists and is used for order/shipment actions, but isn't yet applied to every data-changing endpoint.
 - **No automated dependency vulnerability scanning** configured in CI yet (e.g. `npm audit` / Dependabot / Snyk) -- run one before a production launch with real customer data, and periodically afterward.
 - **No formal penetration test** has been performed. The hardening above reflects secure-coding practice applied during development, not third-party security validation.
