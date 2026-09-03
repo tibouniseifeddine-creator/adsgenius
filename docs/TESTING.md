@@ -29,6 +29,16 @@ These tests are skipped automatically (`describe.skipIf(!DATABASE_URL)`) when `D
 
 If `DATABASE_URL` is set to something unreachable or with the wrong schema, the integration tests will fail loudly (connection errors or Prisma errors) rather than silently passing -- that's expected and means the environment, not the test, needs fixing.
 
+### Troubleshooting: `P1001` / `P2024` errors against a small test branch
+
+If you see Prisma errors like `Can't reach database server at ...` (`P1001`) or `Timed out fetching a new connection from the connection pool` (`P2024`) when running the integration tests against a throwaway database -- especially a Neon branch on the smallest compute size -- this is almost never a real outage or a network problem. It means the branch's tiny compute got more concurrent database connections thrown at it than it can serve at once.
+
+Vitest runs each test file in its own worker process by default, and each of the two integration test files opens its own `PrismaClient` connection pool the first time it needs the database. Two pools hitting a full-size production database at once is nothing; two pools hitting the smallest possible Neon compute at once can exceed what it can serve, and once it's saturated even simple queries start timing out or failing to connect. `vitest.config.ts` sets `fileParallelism: false` for exactly this reason -- test files run one at a time, so only one connection pool is ever active against the database. If you still see these errors after that (for example, on an even smaller/free-tier compute, or if you've changed the Vitest config), try:
+
+- Confirming the branch's compute is actually running (a Neon branch that has auto-suspended after inactivity takes a few seconds to wake back up on the next connection -- if the very first query in a run fails but a retry succeeds, that's what happened, and it's harmless).
+- Capping Prisma's own client-side pool size for the run, e.g. `DATABASE_URL="...&connection_limit=5" npm test`, so it never tries to open more connections than a small compute can realistically hold.
+- Checking basic TCP reachability independently of Prisma/Node, e.g. in PowerShell: `Test-NetConnection <host> -Port 5432` -- if that succeeds, the network is fine and the issue is purely connection-pool sizing as described above, not a firewall or DNS problem.
+
 ## What's covered and what isn't
 
 Covered: password hashing/verification via bcrypt (indirectly, through real register/login calls), JWT-based session tokens, per-IP and per-email rate limiting shape (unit-level), the email format guard, Meta access token encryption at rest, the TOTP algorithm against RFC 6238's own test vectors, the full two-factor login/disable/recovery-code flow, and -- the most important one for a multi-tenant product -- that one workspace's data cannot be read by, or referenced from, another workspace's account, enforced server-side rather than only hidden in the UI.
