@@ -1,6 +1,6 @@
 import React, { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, LogIn, UserPlus, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, LogIn, UserPlus, AlertCircle, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 // See audit finding P30 -- "recovery" mode used to offer email / phone / QR
@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 // single honest notice instead of pretending a recovery flow exists.
 export function Auth() {
   const navigate = useNavigate();
-  const { login, register, error } = useAuth();
+  const { login, verifyTwoFactorLogin, cancelTwoFactorLogin, register, error } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [showRecoveryNotice, setShowRecoveryNotice] = useState(false);
   const [email, setEmail] = useState('');
@@ -22,13 +22,26 @@ export function Auth() {
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
 
+  // See audit finding P12 -- when login() reports twoFactorRequired, the
+  // account has 2FA enabled and the password alone isn't enough. This step
+  // asks for a current code from the user's authenticator app, or one of
+  // their recovery codes if they've lost access to it.
+  const [twoFactorStep, setTwoFactorStep] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setLocalError('');
     try {
-      if (mode === 'login') await login(email, password);
-      else await register({ email, password, name, businessName });
+      if (mode === 'login') {
+        const result = await login(email, password);
+        if (result.twoFactorRequired) { setTwoFactorStep(true); return; }
+      } else {
+        await register({ email, password, name, businessName });
+      }
       navigate('/', { replace: true });
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : 'Authentication failed');
@@ -37,14 +50,37 @@ export function Auth() {
     }
   }
 
-  const title = mode === 'login' ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب حقيقي جديد';
+  async function submitTwoFactor(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setLocalError('');
+    try {
+      await verifyTwoFactorLogin(useRecoveryCode ? { recoveryCode } : { code: twoFactorCode });
+      navigate('/', { replace: true });
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : 'Verification failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function backToLogin() {
+    cancelTwoFactorLogin();
+    setTwoFactorStep(false);
+    setTwoFactorCode('');
+    setRecoveryCode('');
+    setUseRecoveryCode(false);
+    setLocalError('');
+  }
+
+  const title = twoFactorStep ? 'التحقق بخطوتين' : mode === 'login' ? 'تسجيل الدخول إلى حسابك' : 'إنشاء حساب حقيقي جديد';
 
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir="rtl">
       <section className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-sm p-6 md:p-8">
         <div className="text-center mb-7">
           <div className="mx-auto mb-4 w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center">
-            {mode === 'login' ? <LogIn className="w-6 h-6" /> : <UserPlus className="w-6 h-6" />}
+            {twoFactorStep ? <ShieldCheck className="w-6 h-6" /> : mode === 'login' ? <LogIn className="w-6 h-6" /> : <UserPlus className="w-6 h-6" />}
           </div>
           <h1 className="text-2xl font-bold text-gray-900">AdsGenius</h1>
           <p className="mt-2 text-sm text-gray-500">{showRecoveryNotice ? 'استرجاع الحساب' : title}</p>
@@ -52,7 +88,41 @@ export function Auth() {
 
         {(localError || error) && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm p-3">{localError || error}</div>}
 
-        {showRecoveryNotice ? (
+        {twoFactorStep ? (
+          <form onSubmit={submitTwoFactor} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              {useRecoveryCode
+                ? 'أدخل أحد رموز الاسترجاع التي حصلت عليها عند تفعيل التحقق بخطوتين.'
+                : 'أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة الخاص بك.'}
+            </p>
+
+            {useRecoveryCode ? (
+              <label className="block text-sm font-medium text-gray-700">
+                رمز الاسترجاع
+                <input required autoFocus value={recoveryCode} onChange={e => setRecoveryCode(e.target.value)} placeholder="XXXXX-XXXXX"
+                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-blue-500 tracking-widest text-center" />
+              </label>
+            ) : (
+              <label className="block text-sm font-medium text-gray-700">
+                رمز التحقق
+                <input required autoFocus inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={twoFactorCode}
+                  onChange={e => setTwoFactorCode(e.target.value.replace(/\D/g, ''))} placeholder="123456"
+                  className="mt-1 w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-blue-500 tracking-[0.5em] text-center text-lg" />
+              </label>
+            )}
+
+            <button disabled={busy} className="w-full rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-3">
+              {busy ? 'جارٍ التحقق...' : 'تأكيد'}
+            </button>
+
+            <button type="button" onClick={() => { setUseRecoveryCode(value => !value); setLocalError(''); }} className="w-full text-sm text-blue-600 hover:underline">
+              {useRecoveryCode ? 'استخدام رمز من تطبيق المصادقة بدلاً من ذلك' : 'فقدت الوصول لتطبيق المصادقة؟ استخدم رمز استرجاع'}
+            </button>
+            <button type="button" onClick={backToLogin} className="w-full rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium py-3">
+              رجوع لتسجيل الدخول
+            </button>
+          </form>
+        ) : showRecoveryNotice ? (
           <div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-center">
               <AlertCircle className="mx-auto mb-3 w-8 h-8 text-amber-500" />
