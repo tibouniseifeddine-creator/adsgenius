@@ -32,9 +32,13 @@ export default defineConfig({
     // them do it twice for bcrypt password hashing/comparison as well.
     // Against a real remote database (especially a small disposable test
     // branch, per docs/TESTING.md) that's easily 20-30s of genuine work, not
-    // a hang -- raised to 30s so those tests get enough room to actually
-    // finish instead of being killed mid-flight.
-    testTimeout: 30000,
+    // a hang. Raised further to 45s on top of that: a couple of tests
+    // register TWO users in sequence, and api/index.ts's registration
+    // transaction now allows itself up to 20s to ride out a cold Postgres
+    // compute waking from suspend (see the $transaction options at
+    // POST /api/auth/register) -- a worst case of two cold-ish registrations
+    // back to back needs real room, not just the single-registration budget.
+    testTimeout: 45000,
     include: ['backend/src/__tests__/**/*.test.ts'],
     // Vitest runs each test FILE in its own worker process by default. Both
     // integration test files import api/index.ts, which lazily creates its
